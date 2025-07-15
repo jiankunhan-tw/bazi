@@ -147,6 +147,11 @@ def decimal_to_degrees_minutes(decimal_degrees):
     minutes = int((sign_degree - degrees) * 60)
     return degrees, minutes
 
+def format_degree_minute(longitude):
+    """格式化度數為 度° 分' 格式"""
+    degrees, minutes = decimal_to_degrees_minutes(longitude)
+    return f"{degrees}° {minutes:02d}'"
+
 def calculate_bazi_chart(birth_date, birth_time, latitude, longitude):
     """使用lunar-python計算八字命盤"""
     try:
