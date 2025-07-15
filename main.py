@@ -6,18 +6,9 @@ from typing import List, Optional
 import uvicorn
 import re
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# 導入八字庫
-try:
-    from lunar_python import Lunar, Solar
-    LUNAR_AVAILABLE = True
-    print("lunar-python已成功載入")
-except ImportError:
-    LUNAR_AVAILABLE = False
-    print("lunar-python不可用")
-
-app = FastAPI(title="深語AI三系統占星API", description="整合紫微斗數、西洋占星、八字命理的專業系統", version="5.0.0")
+app = FastAPI(title="純開源八字計算API", description="不依賴外部庫的八字命理系統", version="6.0.0")
 
 # 添加 CORS 中間件
 app.add_middleware(
@@ -28,35 +19,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 星座名稱對照表
-SIGN_NAMES = {
-    0: "白羊座", 1: "金牛座", 2: "雙子座", 3: "巨蟹座",
-    4: "獅子座", 5: "處女座", 6: "天秤座", 7: "天蠍座",
-    8: "射手座", 9: "摩羯座", 10: "水瓶座", 11: "雙魚座"
+# 天干地支對照表
+TIAN_GAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
+DI_ZHI = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+
+# 六十甲子納音表
+NAYIN = {
+    "甲子": "海中金", "乙丑": "海中金", "丙寅": "爐中火", "丁卯": "爐中火",
+    "戊辰": "大林木", "己巳": "大林木", "庚午": "路旁土", "辛未": "路旁土",
+    "壬申": "劍鋒金", "癸酉": "劍鋒金", "甲戌": "山頭火", "乙亥": "山頭火",
+    "丙子": "澗下水", "丁丑": "澗下水", "戊寅": "城頭土", "己卯": "城頭土",
+    "庚辰": "白蠟金", "辛巳": "白蠟金", "壬午": "楊柳木", "癸未": "楊柳木",
+    "甲申": "泉中水", "乙酉": "泉中水", "丙戌": "屋上土", "丁亥": "屋上土",
+    "戊子": "霹靂火", "己丑": "霹靂火", "庚寅": "松柏木", "辛卯": "松柏木",
+    "壬辰": "長流水", "癸巳": "長流水", "甲午": "砂中金", "乙未": "砂中金",
+    "丙申": "山下火", "丁酉": "山下火", "戊戌": "平地木", "己亥": "平地木",
+    "庚子": "壁上土", "辛丑": "壁上土", "壬寅": "金箔金", "癸卯": "金箔金",
+    "甲辰": "覆燈火", "乙巳": "覆燈火", "丙午": "天河水", "丁未": "天河水",
+    "戊申": "大驛土", "己酉": "大驛土", "庚戌": "釵釧金", "辛亥": "釵釧金",
+    "壬子": "桑柘木", "癸丑": "桑柘木", "甲寅": "大溪水", "乙卯": "大溪水",
+    "丙辰": "砂中土", "丁巳": "砂中土", "戊午": "天上火", "己未": "天上火",
+    "庚申": "石榴木", "辛酉": "石榴木", "壬戌": "大海水", "癸亥": "大海水"
 }
 
-# 宮位名稱對照表
-HOUSE_NAMES = {
-    1: "第一宮", 2: "第二宮", 3: "第三宮", 4: "第四宮",
-    5: "第五宮", 6: "第六宮", 7: "第七宮", 8: "第八宮",
-    9: "第九宮", 10: "第十宮", 11: "第十一宮", 12: "第十二宮"
+# 十神對照表
+SHI_SHEN_MAP = {
+    "甲": {"甲": "比肩", "乙": "劫財", "丙": "食神", "丁": "傷官", "戊": "偏財", "己": "正財", "庚": "七殺", "辛": "正官", "壬": "偏印", "癸": "正印"},
+    "乙": {"甲": "劫財", "乙": "比肩", "丙": "傷官", "丁": "食神", "戊": "正財", "己": "偏財", "庚": "正官", "辛": "七殺", "壬": "正印", "癸": "偏印"},
+    "丙": {"甲": "偏印", "乙": "正印", "丙": "比肩", "丁": "劫財", "戊": "食神", "己": "傷官", "庚": "偏財", "辛": "正財", "壬": "七殺", "癸": "正官"},
+    "丁": {"甲": "正印", "乙": "偏印", "丙": "劫財", "丁": "比肩", "戊": "傷官", "己": "食神", "庚": "正財", "辛": "偏財", "壬": "正官", "癸": "七殺"},
+    "戊": {"甲": "七殺", "乙": "正官", "丙": "偏印", "丁": "正印", "戊": "比肩", "己": "劫財", "庚": "食神", "辛": "傷官", "壬": "偏財", "癸": "正財"},
+    "己": {"甲": "正官", "乙": "七殺", "丙": "正印", "丁": "偏印", "戊": "劫財", "己": "比肩", "庚": "傷官", "辛": "食神", "壬": "正財", "癸": "偏財"},
+    "庚": {"甲": "偏財", "乙": "正財", "丙": "七殺", "丁": "正官", "戊": "偏印", "己": "正印", "庚": "比肩", "辛": "劫財", "壬": "食神", "癸": "傷官"},
+    "辛": {"甲": "正財", "乙": "偏財", "丙": "正官", "丁": "七殺", "戊": "正印", "己": "偏印", "庚": "劫財", "辛": "比肩", "壬": "傷官", "癸": "食神"},
+    "壬": {"甲": "食神", "乙": "傷官", "丙": "偏財", "丁": "正財", "戊": "七殺", "己": "正官", "庚": "偏印", "辛": "正印", "壬": "比肩", "癸": "劫財"},
+    "癸": {"甲": "傷官", "乙": "食神", "丙": "正財", "丁": "偏財", "戊": "正官", "己": "七殺", "庚": "正印", "辛": "偏印", "壬": "劫財", "癸": "比肩"}
 }
 
-# 行星名稱對照表
-PLANET_NAMES = {
-    0: "太陽", 1: "月亮", 2: "水星", 3: "金星", 4: "火星",
-    5: "木星", 6: "土星", 7: "天王星", 8: "海王星", 9: "冥王星",
-    11: "北交點"
+# 地支藏干表
+DIZHI_CANGAN = {
+    "子": ["癸"], "丑": ["己", "癸", "辛"], "寅": ["甲", "丙", "戊"], "卯": ["乙"],
+    "辰": ["戊", "乙", "癸"], "巳": ["丙", "戊", "庚"], "午": ["丁", "己"], "未": ["己", "丁", "乙"],
+    "申": ["庚", "壬", "戊"], "酉": ["辛"], "戌": ["戊", "辛", "丁"], "亥": ["壬", "甲"]
 }
 
-# 嘗試導入Swiss Ephemeris
-try:
-    import swisseph as swe
-    SWISSEPH_AVAILABLE = True
-    print("Swiss Ephemeris已成功載入")
-except ImportError:
-    SWISSEPH_AVAILABLE = False
-    print("Swiss Ephemeris不可用，將使用高精度備用計算")
+# 五行對照表
+WU_XING = {
+    "甲": "木", "乙": "木", "丙": "火", "丁": "火", "戊": "土", 
+    "己": "土", "庚": "金", "辛": "金", "壬": "水", "癸": "水"
+}
 
 class ChartRequest(BaseModel):
     date: str
@@ -64,26 +75,6 @@ class ChartRequest(BaseModel):
     lat: float
     lon: float
     tz: float = 8.0
-
-class UserInput(BaseModel):
-    userId: str
-    name: str
-    gender: str
-    birthDate: str  # format: YYYYMMDD
-    birthTime: str  # format: HH:MM
-    career: Optional[str] = ""
-    birthPlace: str
-    targetName: Optional[str] = ""
-    targetGender: Optional[str] = ""
-    targetBirthDate: Optional[str] = ""
-    targetBirthTime: Optional[str] = ""
-    targetCareer: Optional[str] = ""
-    targetBirthPlace: Optional[str] = ""
-    content: str
-    contentType: str = "unknown"
-    ready: bool = True
-    latitude: float
-    longitude: float
 
 def parse_date_string(date_str):
     """解析各種日期格式"""
@@ -140,24 +131,97 @@ def parse_time_string(time_str):
     except Exception as e:
         return 12, 0
 
-def decimal_to_degrees_minutes(decimal_degrees):
-    """將小數度數轉換為度分格式"""
-    sign_degree = decimal_degrees % 30
-    degrees = int(sign_degree)
-    minutes = int((sign_degree - degrees) * 60)
-    return degrees, minutes
+def get_ganzhi_from_number(num, is_gan=True):
+    """根據數字獲取天干或地支"""
+    if is_gan:
+        return TIAN_GAN[num % 10]
+    else:
+        return DI_ZHI[num % 12]
 
-def format_degree_minute(longitude):
-    """格式化度數為 度° 分' 格式"""
-    degrees, minutes = decimal_to_degrees_minutes(longitude)
-    return f"{degrees}° {minutes:02d}'"
+def get_year_ganzhi(year):
+    """計算年柱天干地支"""
+    # 以甲子年(1984)為基準
+    gan_index = (year - 1984) % 10
+    zhi_index = (year - 1984) % 12
+    return TIAN_GAN[gan_index], DI_ZHI[zhi_index]
 
-def calculate_bazi_chart(birth_date, birth_time, latitude, longitude):
-    """使用lunar-python計算八字命盤"""
-    try:
-        if not LUNAR_AVAILABLE:
-            raise Exception("lunar-python不可用")
+def get_month_ganzhi(year, month):
+    """計算月柱天干地支"""
+    # 地支固定：寅月(正月)開始
+    month_zhi = ["寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥", "子", "丑"]
+    zhi = month_zhi[month - 1]
+    
+    # 天干根據年干推算
+    year_gan = get_year_ganzhi(year)[0]
+    year_gan_index = TIAN_GAN.index(year_gan)
+    
+    # 月干公式：甲己之年丙作首
+    month_gan_base = [2, 4, 6, 8, 0, 2, 4, 6, 8, 0]  # 對應甲乙丙丁戊己庚辛壬癸年的正月天干
+    gan_index = (month_gan_base[year_gan_index] + month - 1) % 10
+    gan = TIAN_GAN[gan_index]
+    
+    return gan, zhi
+
+def get_day_ganzhi(year, month, day):
+    """計算日柱天干地支"""
+    # 使用簡化的公式計算日柱
+    # 以1900年1月1日為甲戌日作為基準
+    base_date = datetime(1900, 1, 1)
+    target_date = datetime(year, month, day)
+    days_diff = (target_date - base_date).days
+    
+    # 1900年1月1日是甲戌日，甲=0，戌=10
+    gan_index = (0 + days_diff) % 10
+    zhi_index = (10 + days_diff) % 12
+    
+    return TIAN_GAN[gan_index], DI_ZHI[zhi_index]
+
+def get_hour_ganzhi(day_gan, hour):
+    """計算時柱天干地支"""
+    # 時辰地支
+    hour_zhi = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+    zhi_index = ((hour + 1) // 2) % 12
+    zhi = hour_zhi[zhi_index]
+    
+    # 時干根據日干推算
+    day_gan_index = TIAN_GAN.index(day_gan)
+    hour_gan_base = [0, 2, 4, 6, 8, 0, 2, 4, 6, 8]  # 甲己日子時起甲子
+    gan_index = (hour_gan_base[day_gan_index] + zhi_index) % 10
+    gan = TIAN_GAN[gan_index]
+    
+    return gan, zhi
+
+def calculate_shi_shen(day_gan, target_gan):
+    """計算十神"""
+    return SHI_SHEN_MAP[day_gan][target_gan]
+
+def get_nayin(gan, zhi):
+    """獲取納音"""
+    ganzhi = gan + zhi
+    return NAYIN.get(ganzhi, "未知")
+
+def analyze_wu_xing_strength(bazi_pillars):
+    """五行強弱分析"""
+    wu_xing_count = {"木": 0, "火": 0, "土": 0, "金": 0, "水": 0}
+    
+    # 計算天干五行
+    for pillar in bazi_pillars:
+        gan = pillar["天干"]
+        zhi = pillar["地支"]
         
+        # 天干五行
+        wu_xing_count[WU_XING[gan]] += 2
+        
+        # 地支藏干五行
+        cangan_list = DIZHI_CANGAN[zhi]
+        for cangan in cangan_list:
+            wu_xing_count[WU_XING[cangan]] += 1
+    
+    return wu_xing_count
+
+def calculate_pure_bazi(birth_date, birth_time, latitude=None, longitude=None):
+    """純開源八字計算"""
+    try:
         year, month, day = parse_date_string(birth_date)
         hour, minute = parse_time_string(birth_time)
         
@@ -171,666 +235,134 @@ def calculate_bazi_chart(birth_date, birth_time, latitude, longitude):
         if not (0 <= minute <= 59):
             minute = 0
         
-        # 創建陽曆對象
-        solar = Solar.fromYmdHms(year, month, day, hour, minute, 0)
-        lunar = solar.getLunar()
+        # 計算四柱
+        year_gan, year_zhi = get_year_ganzhi(year)
+        month_gan, month_zhi = get_month_ganzhi(year, month)
+        day_gan, day_zhi = get_day_ganzhi(year, month, day)
+        hour_gan, hour_zhi = get_hour_ganzhi(day_gan, hour)
         
-        # 取得八字
-        eight_char = lunar.getEightChar()
+        # 組成八字
+        bazi_pillars = [
+            {"天干": year_gan, "地支": year_zhi, "柱名": "年柱"},
+            {"天干": month_gan, "地支": month_zhi, "柱名": "月柱"},
+            {"天干": day_gan, "地支": day_zhi, "柱名": "日柱"},
+            {"天干": hour_gan, "地支": hour_zhi, "柱名": "時柱"}
+        ]
         
-        # 基本八字信息
-        bazi_info = {
-            "年柱": {
-                "天干": eight_char.getYearGan(),
-                "地支": eight_char.getYearZhi(),
-                "納音": eight_char.getYearNaYin()
-            },
-            "月柱": {
-                "天干": eight_char.getMonthGan(), 
-                "地支": eight_char.getMonthZhi(),
-                "納音": eight_char.getMonthNaYin()
-            },
-            "日柱": {
-                "天干": eight_char.getDayGan(),
-                "地支": eight_char.getDayZhi(), 
-                "納音": eight_char.getDayNaYin()
-            },
-            "時柱": {
-                "天干": eight_char.getTimeGan(),
-                "地支": eight_char.getTimeZhi(),
-                "納音": eight_char.getTimeNaYin()
-            }
-        }
+        # 計算納音
+        for pillar in bazi_pillars:
+            pillar["納音"] = get_nayin(pillar["天干"], pillar["地支"])
         
-        # 取得大運
-        da_yun = eight_char.getDaYun(1)  # 順運
-        dayun_list = []
-        for i in range(8):  # 取8步大運
-            yun = da_yun.next(i)
-            if yun:
-                dayun_list.append({
-                    "大運": f"{yun.getGanZhi()}",
-                    "起運年齡": yun.getStartAge(),
-                    "結束年齡": yun.getEndAge(),
-                    "起運年份": yun.getStartYear()
-                })
+        # 計算十神
+        shi_shen_info = {}
+        for pillar in bazi_pillars:
+            gan = pillar["天干"]
+            if gan != day_gan:  # 不計算日干自己
+                shi_shen_info[f"{pillar['柱名']}干"] = calculate_shi_shen(day_gan, gan)
+            
+            # 地支藏干十神
+            cangan_list = DIZHI_CANGAN[pillar["地支"]]
+            for i, cangan in enumerate(cangan_list):
+                if cangan != day_gan:
+                    shi_shen_info[f"{pillar['柱名']}支藏干{i+1}"] = calculate_shi_shen(day_gan, cangan)
         
-        # 日主強弱分析
-        day_gan = eight_char.getDayGan()
+        # 五行分析
+        wu_xing_analysis = analyze_wu_xing_strength(bazi_pillars)
         
-        # 十神分析
-        shi_shen = {
-            "年干十神": eight_char.getYearShiShenGan(),
-            "年支十神": eight_char.getYearShiShenZhi()[0] if eight_char.getYearShiShenZhi() else "",
-            "月干十神": eight_char.getMonthShiShenGan(),
-            "月支十神": eight_char.getMonthShiShenZhi()[0] if eight_char.getMonthShiShenZhi() else "",
-            "日支十神": eight_char.getDayShiShenZhi()[0] if eight_char.getDayShiShenZhi() else "",
-            "時干十神": eight_char.getTimeShiShenGan(),
-            "時支十神": eight_char.getTimeShiShenZhi()[0] if eight_char.getTimeShiShenZhi() else ""
-        }
+        # 日主五行
+        day_wu_xing = WU_XING[day_gan]
         
-        # 格局分析
-        pattern_analysis = analyze_bazi_pattern(bazi_info, day_gan)
+        # 基本格局判斷（簡化）
+        day_strength = wu_xing_analysis[day_wu_xing]
+        total_strength = sum(wu_xing_analysis.values())
+        strength_ratio = day_strength / total_strength
+        
+        if strength_ratio > 0.3:
+            body_strength = "身強"
+            yong_shen = get_weak_elements(wu_xing_analysis)
+        else:
+            body_strength = "身弱"
+            yong_shen = get_strong_elements(wu_xing_analysis, day_wu_xing)
+        
+        # 大運計算（簡化版）
+        da_yun = calculate_da_yun(year_gan, month_gan, month_zhi)
         
         return {
-            "八字命盤": bazi_info,
+            "八字命盤": {
+                "年柱": {"天干": year_gan, "地支": year_zhi, "納音": get_nayin(year_gan, year_zhi)},
+                "月柱": {"天干": month_gan, "地支": month_zhi, "納音": get_nayin(month_gan, month_zhi)},
+                "日柱": {"天干": day_gan, "地支": day_zhi, "納音": get_nayin(day_gan, day_zhi)},
+                "時柱": {"天干": hour_gan, "地支": hour_zhi, "納音": get_nayin(hour_gan, hour_zhi)}
+            },
             "日主": day_gan,
-            "大運": dayun_list,
-            "十神": shi_shen,
-            "格局分析": pattern_analysis,
-            "陰陽曆信息": {
-                "陽曆": f"{year}年{month}月{day}日 {hour}時{minute}分",
-                "陰曆": f"{lunar.getYearInChinese()}年{lunar.getMonthInChinese()}月{lunar.getDayInChinese()} {lunar.getTimeInChinese()}時",
-                "節氣": lunar.getJieQi(),
-                "生肖": lunar.getYearShengXiao()
+            "日主五行": day_wu_xing,
+            "十神分析": shi_shen_info,
+            "五行分析": wu_xing_analysis,
+            "身強身弱": body_strength,
+            "用神建議": yong_shen,
+            "大運": da_yun,
+            "基本信息": {
+                "公曆": f"{year}年{month}月{day}日 {hour}時{minute}分",
+                "計算方式": "純開源算法"
             }
         }
         
     except Exception as e:
         raise Exception(f"八字計算錯誤: {str(e)}")
 
-def analyze_bazi_pattern(bazi_info, day_gan):
-    """簡化的八字格局分析"""
-    try:
-        # 基本格局判斷（簡化版）
-        month_gan = bazi_info["月柱"]["天干"]
-        month_zhi = bazi_info["月柱"]["地支"]
-        
-        # 五行分析
-        gan_elements = {"甲": "木", "乙": "木", "丙": "火", "丁": "火", 
-                       "戊": "土", "己": "土", "庚": "金", "辛": "金", 
-                       "壬": "水", "癸": "水"}
-        
-        day_element = gan_elements.get(day_gan, "未知")
-        
-        # 基本強弱判斷
-        strength = "中和"  # 簡化處理
-        
-        # 用神建議
-        yong_shen = get_yong_shen_suggestion(day_gan, month_zhi)
-        
-        return {
-            "日主五行": day_element,
-            "身強身弱": strength,
-            "建議用神": yong_shen,
-            "格局類型": "普通格局",  # 簡化處理
-            "喜用神": yong_shen,
-            "忌神": get_ji_shen_suggestion(day_gan)
-        }
-        
-    except Exception as e:
-        return {"格局分析": "分析失敗", "錯誤": str(e)}
+def get_weak_elements(wu_xing_analysis):
+    """獲取較弱的五行作為用神"""
+    sorted_elements = sorted(wu_xing_analysis.items(), key=lambda x: x[1])
+    return [elem[0] for elem in sorted_elements[:2]]
 
-def get_yong_shen_suggestion(day_gan, month_zhi):
-    """簡化的用神建議"""
-    suggestions = {
-        "甲": "火、土", "乙": "火、金", "丙": "水、土", "丁": "水、金",
-        "戊": "木、水", "己": "木、火", "庚": "火、木", "辛": "水、木", 
-        "壬": "土、火", "癸": "火、土"
+def get_strong_elements(wu_xing_analysis, day_wu_xing):
+    """獲取能扶助日主的五行"""
+    helper_elements = {
+        "木": ["水", "木"], "火": ["木", "火"], "土": ["火", "土"],
+        "金": ["土", "金"], "水": ["金", "水"]
     }
-    return suggestions.get(day_gan, "需詳細分析")
+    return helper_elements.get(day_wu_xing, ["需詳細分析"])
 
-def get_ji_shen_suggestion(day_gan):
-    """簡化的忌神建議"""
-    ji_shen = {
-        "甲": "金、水", "乙": "土、水", "丙": "金、木", "丁": "土、木",
-        "戊": "金、火", "己": "水、金", "庚": "水、土", "辛": "火、土",
-        "壬": "木、金", "癸": "木、水"
-    }
-    return ji_shen.get(day_gan, "需詳細分析")
-
-def get_planet_house(planet_lon, houses):
-    """計算行星在哪個宮位"""
-    try:
-        planet_lon = planet_lon % 360
-        for house_num in range(1, 13):
-            next_house = house_num + 1 if house_num < 12 else 1
-            house_start = houses[house_num - 1]  # houses是0-based
-            house_end = houses[next_house - 1] if next_house <= 12 else houses[0]
-            
-            if house_start < house_end:
-                if house_start <= planet_lon < house_end:
-                    return house_num
-            else:  # 跨越0度
-                if planet_lon >= house_start or planet_lon < house_end:
-                    return house_num
-        return 1
-    except Exception as e:
-        return 1
-
-def calculate_swiss_ephemeris_chart(birth_date, birth_time, latitude, longitude):
-    """使用Swiss Ephemeris計算真正專業的占星圖"""
-    try:
-        if not SWISSEPH_AVAILABLE:
-            raise Exception("Swiss Ephemeris不可用")
+def calculate_da_yun(year_gan, month_gan, month_zhi):
+    """計算大運（簡化版）"""
+    da_yun_list = []
+    
+    # 從月柱開始推算大運
+    month_gan_index = TIAN_GAN.index(month_gan)
+    month_zhi_index = DI_ZHI.index(month_zhi)
+    
+    for i in range(8):  # 計算8步大運
+        da_yun_gan = TIAN_GAN[(month_gan_index + i + 1) % 10]
+        da_yun_zhi = DI_ZHI[(month_zhi_index + i + 1) % 12]
         
-        year, month, day = parse_date_string(birth_date)
-        hour, minute = parse_time_string(birth_time)
-        
-        # 驗證日期時間
-        if not (1 <= month <= 12):
-            month = 1
-        if not (1 <= day <= 31):
-            day = 1
-        if not (0 <= hour <= 23):
-            hour = 12
-        if not (0 <= minute <= 59):
-            minute = 0
-        
-        # 計算儒略日（UTC時間）
-        jd_ut = swe.julday(year, month, day, hour + minute/60.0)
-        
-        # 計算宮位（使用Placidus宮位制）
-        houses, ascmc = swe.houses(jd_ut, latitude, longitude, b'P')
-        
-        # 取得上升點和天頂
-        asc = ascmc[0]  # 上升點
-        mc = ascmc[1]   # 天頂
-        
-        result = {}
-        
-        # 計算主要行星位置
-        for planet_id in range(10):  # 0-9: 太陽到冥王星
-            try:
-                xx, ret = swe.calc_ut(jd_ut, planet_id, swe.FLG_SWIEPH)
-                longitude = xx[0]
-                speed = xx[3]
-                
-                planet_name = PLANET_NAMES.get(planet_id, f"行星{planet_id}")
-                sign_num = int(longitude // 30)
-                sign_name = SIGN_NAMES.get(sign_num, f"星座{sign_num}")
-                house_num = get_planet_house(longitude, houses)
-                
-                result[planet_name] = {
-                    "longitude": round(longitude, 2),
-                    "sign": sign_num,
-                    "sign_name": sign_name,
-                    "house": house_num,
-                    "house_name": HOUSE_NAMES[house_num],
-                    "degree_format": format_degree_minute(longitude),
-                    "speed": round(speed, 4)
-                }
-            except Exception as e:
-                print(f"計算行星 {planet_id} 時出錯: {e}")
-        
-        # 計算北交點
-        try:
-            xx, ret = swe.calc_ut(jd_ut, swe.MEAN_NODE, swe.FLG_SWIEPH)
-            longitude = xx[0]
-            sign_num = int(longitude // 30)
-            house_num = get_planet_house(longitude, houses)
-            
-            result["北交點"] = {
-                "longitude": round(longitude, 2),
-                "sign": sign_num,
-                "sign_name": SIGN_NAMES.get(sign_num, f"星座{sign_num}"),
-                "house": house_num,
-                "house_name": HOUSE_NAMES[house_num],
-                "degree_format": format_degree_minute(longitude),
-                "speed": round(xx[3], 4)
-            }
-        except Exception as e:
-            print(f"計算北交點時出錯: {e}")
-        
-        # 添加上升點
-        sign_num = int(asc // 30)
-        result["上升點"] = {
-            "longitude": round(asc, 2),
-            "sign": sign_num,
-            "sign_name": SIGN_NAMES.get(sign_num, f"星座{sign_num}"),
-            "house": 1,
-            "house_name": "第一宮",
-            "degree_format": format_degree_minute(asc),
-            "speed": 0.0
-        }
-        
-        # 添加天頂
-        sign_num = int(mc // 30)
-        result["天頂"] = {
-            "longitude": round(mc, 2),
-            "sign": sign_num,
-            "sign_name": SIGN_NAMES.get(sign_num, f"星座{sign_num}"),
-            "house": 10,
-            "house_name": "第十宮",
-            "degree_format": format_degree_minute(mc),
-            "speed": 0.0
-        }
-        
-        return result
-        
-    except Exception as e:
-        raise Exception(f"Swiss Ephemeris計算錯誤: {str(e)}")
-
-def create_advanced_fallback_chart(birth_date, birth_time, latitude, longitude):
-    """高精度備用計算（改進版）"""
-    try:
-        year, month, day = parse_date_string(birth_date)
-        hour, minute = parse_time_string(birth_time)
-        
-        # 驗證日期時間
-        if not (1 <= month <= 12):
-            month = 1
-        if not (1 <= day <= 31):
-            day = 1
-        if not (0 <= hour <= 23):
-            hour = 12
-        if not (0 <= minute <= 59):
-            minute = 0
-        
-        # 精確的儒略日計算
-        if month <= 2:
-            year -= 1
-            month += 12
-        
-        A = year // 100
-        B = 2 - A + A // 4
-        JD = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
-        JD += (hour + minute / 60.0) / 24.0
-        
-        # 高精度天文計算
-        T = (JD - 2451545.0) / 36525.0
-        T2 = T * T
-        T3 = T2 * T
-        
-        # 精確的太陽位置（VSOP87理論）
-        L0 = 280.4664567 + 360007.6982779 * T + 0.03032028 * T2 + T3/49931 - T3*T/15300 - T3*T2/2000000
-        M = 357.52772 + 35999.05034 * T - 0.0001603 * T2 - T3/300000
-        
-        # 太陽真黃經
-        M_rad = math.radians(M)
-        C = (1.914602 - 0.004817 * T - 0.000014 * T2) * math.sin(M_rad) + \
-            (0.019993 - 0.000101 * T) * math.sin(2 * M_rad) + \
-            0.000289 * math.sin(3 * M_rad)
-        
-        sun_lon = (L0 + C) % 360
-        
-        # 月亮位置（ELP2000/82理論簡化版）
-        L_moon = (218.3164477 + 481267.88123421 * T - 0.0015786 * T2 + T3/538841 - T3*T/65194000) % 360
-        D = (297.8501921 + 445267.1114034 * T - 0.0018819 * T2 + T3/545868 - T3*T/113065000) % 360
-        M_moon = (134.9633964 + 477198.8675055 * T + 0.0087414 * T2 + T3/69699 - T3*T/14712000) % 360
-        F = (93.2720950 + 483202.0175233 * T - 0.0036539 * T2 - T3/3526000 + T3*T/863310000) % 360
-        
-        # 月亮主要攝動項
-        moon_corrections = [
-            6.288774 * math.sin(math.radians(M_moon)),
-            1.274027 * math.sin(math.radians(2*D - M_moon)),
-            0.658314 * math.sin(math.radians(2*D)),
-            0.213618 * math.sin(math.radians(2*M_moon)),
-            -0.185116 * math.sin(math.radians(M)),
-            -0.114332 * math.sin(math.radians(2*F))
-        ]
-        
-        moon_lon = (L_moon + sum(moon_corrections)) % 360
-        
-        # 行星位置（簡化VSOP87）
-        planet_data = {
-            "水星": {"L0": 252.250906, "L1": 149472.6746358, "a": 0.38709893, "e": 0.20563069},
-            "金星": {"L0": 181.979801, "L1": 58517.8156760, "a": 0.72333199, "e": 0.00677323},
-            "火星": {"L0": 355.433, "L1": 19140.299, "a": 1.52366231, "e": 0.09341233},
-            "木星": {"L0": 34.351519, "L1": 3034.90567, "a": 5.20336301, "e": 0.04839266},
-            "土星": {"L0": 50.077444, "L1": 1222.11387, "a": 9.53707032, "e": 0.05415060},
-            "天王星": {"L0": 314.055, "L1": 428.467, "a": 19.19126393, "e": 0.04716771},
-            "海王星": {"L0": 304.349, "L1": 218.486, "a": 30.06896348, "e": 0.00858587},
-            "冥王星": {"L0": 238.928, "L1": 145.18, "a": 39.48, "e": 0.2488}
-        }
-        
-        planet_positions = {"太陽": sun_lon, "月亮": moon_lon}
-        
-        for planet_name, data in planet_data.items():
-            try:
-                L = (data["L0"] + data["L1"] * T) % 360
-                M_planet = (L - data["L0"]) % 360
-                E = M_planet + data["e"] * math.degrees(math.sin(math.radians(M_planet)))
-                nu = 2 * math.atan(math.sqrt((1 + data["e"]) / (1 - data["e"])) * math.tan(math.radians(E) / 2))
-                planet_lon = (math.degrees(nu) + data["L0"]) % 360
-                planet_positions[planet_name] = planet_lon
-            except:
-                planet_positions[planet_name] = (sun_lon + hash(planet_name) % 360) % 360
-        
-        # 精確的上升點計算
-        lat_rad = math.radians(latitude)
-        
-        # 恆星時計算
-        GMST0 = (280.46061837 + 360.98564736629 * (JD - 2451545.0)) % 360
-        GMST = (GMST0 + longitude + (hour + minute/60.0) * 15) % 360
-        LST = GMST
-        
-        # 太陽赤經赤緯
-        epsilon = 23.4393 - 0.0130 * T  # 黃赤交角
-        epsilon_rad = math.radians(epsilon)
-        sun_lon_rad = math.radians(sun_lon)
-        
-        # 上升點計算
-        LST_rad = math.radians(LST)
-        tan_asc = (math.cos(LST_rad) * math.tan(epsilon_rad) * math.cos(lat_rad) - math.sin(lat_rad) * math.sin(LST_rad)) / math.cos(LST_rad)
-        asc_lon = math.degrees(math.atan(tan_asc)) % 360
-        if LST > 180:
-            asc_lon = (asc_lon + 180) % 360
-        
-        # 天頂計算
-        mc_lon = (LST + 90) % 360
-        
-        planet_positions["上升點"] = asc_lon
-        planet_positions["天頂"] = mc_lon
-        
-        # 北交點（簡化計算）
-        omega = (125.0445479 - 1934.1362891 * T + 0.0020754 * T2 + T3/467441) % 360
-        planet_positions["北交點"] = omega
-        
-        # 簡化的宮位計算（等宮制改進版）
-        houses = []
-        for i in range(12):
-            house_cusp = (asc_lon + i * 30) % 360
-            houses.append(house_cusp)
-        
-        # 格式化結果
-        result = {}
-        for planet_name, longitude in planet_positions.items():
-            longitude = longitude % 360
-            sign_num = int(longitude // 30)
-            sign_name = SIGN_NAMES[sign_num]
-            house_num = get_planet_house(longitude, houses)
-            
-            result[planet_name] = {
-                "longitude": round(longitude, 2),
-                "sign": sign_num,
-                "sign_name": sign_name,
-                "house": house_num,
-                "house_name": HOUSE_NAMES[house_num],
-                "degree_format": format_degree_minute(longitude),
-                "speed": 0.0
-            }
-        
-        return result
-        
-    except Exception as e:
-        raise Exception(f"高精度備用計算錯誤: {str(e)}")
+        da_yun_list.append({
+            "大運": f"{da_yun_gan}{da_yun_zhi}",
+            "起運年齡": 3 + i * 10,  # 簡化：3歲起運，每10年一步
+            "結束年齡": 12 + i * 10,
+            "納音": get_nayin(da_yun_gan, da_yun_zhi)
+        })
+    
+    return da_yun_list
 
 @app.get("/")
 def read_root():
-    swiss_status = "可用" if SWISSEPH_AVAILABLE else "不可用"
-    lunar_status = "可用" if LUNAR_AVAILABLE else "不可用"
     return {
-        "message": "深語AI三系統占星API服務正在運行", 
-        "version": "5.0.0",
-        "系統狀態": {
-            "西洋占星": f"Swiss Ephemeris {swiss_status}",
-            "八字命理": f"lunar-python {lunar_status}",
-            "紫微斗數": "待整合"
-        },
-        "可用端點": {
-            "/deep_analysis": "深語AI三系統完整分析",
-            "/chart": "西洋占星分析", 
-            "/bazi": "八字命理分析",
-            "/health": "系統健康檢查"
-        }
+        "message": "純開源八字計算API", 
+        "version": "6.0.0",
+        "系統狀態": "完全獨立，無外部依賴",
+        "支援功能": [
+            "四柱八字排盤",
+            "納音五行", 
+            "十神分析",
+            "五行強弱",
+            "大運計算",
+            "身強身弱判斷"
+        ]
     }
 
-@app.post("/deep_analysis")
-def deep_soul_analysis(users: List[UserInput]):
-    """深語AI三系統靈魂分析"""
-    try:
-        if not users or len(users) == 0:
-            raise HTTPException(status_code=400, detail="請提供用戶資料")
-        
-        user = users[0]
-        
-        # 計算三系統命盤
-        results = {}
-        calculation_methods = {}
-        
-        # 1. 西洋占星
-        try:
-            if SWISSEPH_AVAILABLE:
-                astro_chart = calculate_swiss_ephemeris_chart(
-                    user.birthDate, user.birthTime, user.latitude, user.longitude
-                )
-                calculation_methods["西洋占星"] = "Swiss Ephemeris專業計算"
-            else:
-                astro_chart = create_advanced_fallback_chart(
-                    user.birthDate, user.birthTime, user.latitude, user.longitude
-                )
-                calculation_methods["西洋占星"] = "高精度備用計算"
-            results["西洋占星"] = astro_chart
-        except Exception as e:
-            results["西洋占星"] = {"錯誤": str(e)}
-            calculation_methods["西洋占星"] = "計算失敗"
-        
-        # 2. 八字命理
-        try:
-            if LUNAR_AVAILABLE:
-                bazi_chart = calculate_bazi_chart(
-                    user.birthDate, user.birthTime, user.latitude, user.longitude
-                )
-                calculation_methods["八字命理"] = "lunar-python專業計算"
-            else:
-                bazi_chart = {"錯誤": "lunar-python不可用"}
-                calculation_methods["八字命理"] = "計算失敗"
-            results["八字命理"] = bazi_chart
-        except Exception as e:
-            results["八字命理"] = {"錯誤": str(e)}
-            calculation_methods["八字命理"] = "計算失敗"
-        
-        # 3. 深語AI分析（基礎版）
-        soul_analysis = generate_basic_soul_analysis(results, user)
-        
-        return {
-            "status": "success",
-            "service": "深語AI三系統分析",
-            "計算方法": calculation_methods,
-            "用戶資訊": {
-                "姓名": user.name,
-                "性別": user.gender,
-                "出生日期": f"{user.birthDate[:4]}-{user.birthDate[4:6]}-{user.birthDate[6:8]}",
-                "出生時間": user.birthTime,
-                "出生地點": user.birthPlace
-            },
-            "三系統命盤": results,
-            "深語AI洞察": soul_analysis
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "trace": traceback.format_exc()
-        }
-
-def generate_basic_soul_analysis(charts, user_data):
-    """基礎版深語AI分析"""
-    try:
-        analysis = {
-            "靈魂映照": "正在分析你的內在狀態...",
-            "關係解構": "正在解構你的關係模式...", 
-            "生命導航": "正在為你指引方向...",
-            "整合洞察": "三系統整合分析中..."
-        }
-        
-        # 如果有八字資料，加入基本分析
-        if "八字命理" in charts and "錯誤" not in charts["八字命理"]:
-            bazi = charts["八字命理"]
-            if "格局分析" in bazi:
-                analysis["八字洞察"] = {
-                    "日主特質": f"你是{bazi['日主']}日主，{bazi['格局分析']['日主五行']}性格",
-                    "用神建議": f"建議補強：{bazi['格局分析']['建議用神']}",
-                    "大運趨勢": f"未來大運：{bazi['大運'][0]['大運'] if bazi['大運'] else '計算中'}"
-                }
-        
-        # 如果有占星資料，加入基本分析  
-        if "西洋占星" in charts and "錯誤" not in charts["西洋占星"]:
-            astro = charts["西洋占星"]
-            if "太陽" in astro:
-                analysis["占星洞察"] = {
-                    "核心特質": f"太陽{astro['太陽']['sign_name']}的你，具有{astro['太陽']['house_name']}的人生主題",
-                    "情感模式": f"月亮{astro.get('月亮', {}).get('sign_name', '未知')}影響你的情感表達",
-                    "行動力": f"火星位於{astro.get('火星', {}).get('house_name', '未知')}，決定你的行動模式"
-                }
-        
-        return analysis
-        
-    except Exception as e:
-        return {"分析錯誤": str(e)}
-    """分析用戶的占星圖，使用Swiss Ephemeris專業計算"""
-    try:
-        if not users or len(users) == 0:
-            raise HTTPException(status_code=400, detail="請提供用戶資料")
-        
-        user = users[0]
-        
-        # 嘗試使用Swiss Ephemeris，失敗則使用高精度備用計算
-        try:
-            if SWISSEPH_AVAILABLE:
-                chart_data = calculate_swiss_ephemeris_chart(
-                    user.birthDate, 
-                    user.birthTime, 
-                    user.latitude, 
-                    user.longitude
-                )
-                calculation_method = "Swiss Ephemeris專業計算"
-            else:
-                raise Exception("Swiss Ephemeris不可用")
-        except Exception as e:
-            print(f"Swiss Ephemeris計算失敗: {e}")
-            chart_data = create_advanced_fallback_chart(
-                user.birthDate, 
-                user.birthTime, 
-                user.latitude, 
-                user.longitude
-            )
-            calculation_method = "高精度備用計算"
-        
-        # 格式化輸出
-        formatted_chart = {}
-        house_distribution = {}
-        
-        for planet_name, data in chart_data.items():
-            formatted_chart[planet_name] = {
-                "星座": data["sign_name"],
-                "宮位": data["house_name"],
-                "度數": data["degree_format"],
-                "黃經": data["longitude"],
-                "宮位數字": data["house"],
-                "速度": data["speed"]
-            }
-            
-            house_key = data["house_name"]
-            if house_key not in house_distribution:
-                house_distribution[house_key] = []
-            house_distribution[house_key].append(planet_name)
-        
-        important_houses = sorted(house_distribution.items(), 
-                                key=lambda x: len(x[1]), 
-                                reverse=True)[:3]
-        
-        key_combinations = []
-        for house, planets_list in important_houses:
-            key_combinations.append({
-                "宮位": house,
-                "行星": planets_list,
-                "重要度": len(planets_list)
-            })
-        
-        return {
-            "status": "success",
-            "計算方法": calculation_method,
-            "用戶資訊": {
-                "姓名": user.name,
-                "性別": user.gender,
-                "出生日期": f"{user.birthDate[:4]}-{user.birthDate[4:6]}-{user.birthDate[6:8]}",
-                "出生時間": user.birthTime,
-                "出生地點": user.birthPlace
-            },
-            "星盤詳情": formatted_chart,
-            "重要宮位組合": key_combinations,
-            "宮位分佈": house_distribution
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "trace": traceback.format_exc()
-        }
-
-@app.post("/chart")
-def analyze_chart(req: ChartRequest):
-    """原始的占星圖分析端點（Swiss Ephemeris版）"""
-    try:
-        clean_date = re.sub(r'[^0-9]', '', req.date)
-        
-        if len(clean_date) != 8:
-            try:
-                if '/' in req.date:
-                    parts = req.date.split('/')
-                    if len(parts) == 3:
-                        if len(parts[0]) == 4:
-                            clean_date = f"{parts[0]}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-                        else:
-                            clean_date = f"{parts[2]}{parts[0].zfill(2)}{parts[1].zfill(2)}"
-                elif '-' in req.date:
-                    parts = req.date.split('-')
-                    if len(parts) == 3:
-                        clean_date = f"{parts[0]}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-            except:
-                clean_date = "20000101"
-        
-        # 嘗試使用Swiss Ephemeris
-        try:
-            if SWISSEPH_AVAILABLE:
-                chart_data = calculate_swiss_ephemeris_chart(clean_date, req.time, req.lat, req.lon)
-                calculation_method = "Swiss Ephemeris專業計算"
-            else:
-                raise Exception("Swiss Ephemeris不可用")
-        except Exception as e:
-            chart_data = create_advanced_fallback_chart(clean_date, req.time, req.lat, req.lon)
-            calculation_method = "高精度備用計算"
-        
-        result = {}
-        for planet_name, data in chart_data.items():
-            result[planet_name] = {
-                "sign": data["sign_name"],
-                "house": data["house_name"],
-                "longitude": data["longitude"],
-                "degree_format": data["degree_format"],
-                "speed": data["speed"]
-            }
-        
-        return {
-            "status": "success",
-            "calculation_method": calculation_method,
-            "planets": result
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "trace": traceback.format_exc()
-        }
-
 @app.post("/bazi")
-def analyze_bazi_only(req: ChartRequest):
-    """專門的八字分析端點"""
+def analyze_pure_bazi(req: ChartRequest):
+    """純開源八字分析"""
     try:
         clean_date = re.sub(r'[^0-9]', '', req.date)
         
@@ -850,17 +382,12 @@ def analyze_bazi_only(req: ChartRequest):
             except:
                 clean_date = "20000101"
         
-        # 計算八字
-        if LUNAR_AVAILABLE:
-            bazi_data = calculate_bazi_chart(clean_date, req.time, req.lat, req.lon)
-            calculation_method = "lunar-python專業計算"
-        else:
-            bazi_data = {"錯誤": "lunar-python不可用"}
-            calculation_method = "計算失敗"
+        # 純開源八字計算
+        bazi_data = calculate_pure_bazi(clean_date, req.time, req.lat, req.lon)
         
         return {
             "status": "success",
-            "calculation_method": calculation_method,
+            "calculation_method": "純開源八字算法",
             "bazi_chart": bazi_data
         }
         
@@ -875,13 +402,9 @@ def analyze_bazi_only(req: ChartRequest):
 def health_check():
     return {
         "status": "healthy", 
-        "service": "deep-language-ai-api",
-        "modules": {
-            "swiss_ephemeris": SWISSEPH_AVAILABLE,
-            "lunar_python": LUNAR_AVAILABLE,
-            "紫微斗數": "待整合"
-        },
-        "version": "5.0.0"
+        "service": "pure-bazi-calculator",
+        "dependencies": "無外部依賴",
+        "version": "6.0.0"
     }
 
 if __name__ == "__main__":
