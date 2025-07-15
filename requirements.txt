@@ -1,5 +1,6 @@
+
 fastapi==0.111.0
 uvicorn==0.22.0
 pydantic==2.5.0
 pyswisseph==2.10.3.2
-lunar-python==1.6.4
+lunar-python
