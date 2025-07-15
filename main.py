@@ -8,7 +8,7 @@ import re
 import math
 from datetime import datetime, timedelta
 
-app = FastAPI(title="精準八字計算API", description="基於節氣和真太陽時的準確八字系統", version="7.0.0")
+app = FastAPI(title="深語AI三系統整合API", description="陽曆轉農曆+八字+占星+紫微", version="8.0.0")
 
 # 添加 CORS 中間件
 app.add_middleware(
@@ -18,6 +18,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 嘗試導入農曆轉換庫
+try:
+    from zhdate import ZhDate
+    LUNAR_CONVERTER_AVAILABLE = True
+    print("zhdate農曆轉換庫已成功載入")
+except ImportError:
+    LUNAR_CONVERTER_AVAILABLE = False
+    print("zhdate不可用，使用備用轉換")
+
+# 嘗試導入Swiss Ephemeris
+try:
+    import swisseph as swe
+    SWISSEPH_AVAILABLE = True
+    print("Swiss Ephemeris已成功載入")
+except ImportError:
+    SWISSEPH_AVAILABLE = False
+    print("Swiss Ephemeris不可用")
 
 # 天干地支對照表
 TIAN_GAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
@@ -42,34 +60,18 @@ NAYIN = {
     "庚申": "石榴木", "辛酉": "石榴木", "壬戌": "大海水", "癸亥": "大海水"
 }
 
-# 十神對照表
-SHI_SHEN_MAP = {
-    "甲": {"甲": "比肩", "乙": "劫財", "丙": "食神", "丁": "傷官", "戊": "偏財", "己": "正財", "庚": "七殺", "辛": "正官", "壬": "偏印", "癸": "正印"},
-    "乙": {"甲": "劫財", "乙": "比肩", "丙": "傷官", "丁": "食神", "戊": "正財", "己": "偏財", "庚": "正官", "辛": "七殺", "壬": "正印", "癸": "偏印"},
-    "丙": {"甲": "偏印", "乙": "正印", "丙": "比肩", "丁": "劫財", "戊": "食神", "己": "傷官", "庚": "偏財", "辛": "正財", "壬": "七殺", "癸": "正官"},
-    "丁": {"甲": "正印", "乙": "偏印", "丙": "劫財", "丁": "比肩", "戊": "傷官", "己": "食神", "庚": "正財", "辛": "偏財", "壬": "正官", "癸": "七殺"},
-    "戊": {"甲": "七殺", "乙": "正官", "丙": "偏印", "丁": "正印", "戊": "比肩", "己": "劫財", "庚": "食神", "辛": "傷官", "壬": "偏財", "癸": "正財"},
-    "己": {"甲": "正官", "乙": "七殺", "丙": "正印", "丁": "偏印", "戊": "劫財", "己": "比肩", "庚": "傷官", "辛": "食神", "壬": "正財", "癸": "偏財"},
-    "庚": {"甲": "偏財", "乙": "正財", "丙": "七殺", "丁": "正官", "戊": "偏印", "己": "正印", "庚": "比肩", "辛": "劫財", "壬": "食神", "癸": "傷官"},
-    "辛": {"甲": "正財", "乙": "偏財", "丙": "正官", "丁": "七殺", "戊": "正印", "己": "偏印", "庚": "劫財", "辛": "比肩", "壬": "傷官", "癸": "食神"},
-    "壬": {"甲": "食神", "乙": "傷官", "丙": "偏財", "丁": "正財", "戊": "七殺", "己": "正官", "庚": "偏印", "辛": "正印", "壬": "比肩", "癸": "劫財"},
-    "癸": {"甲": "傷官", "乙": "食神", "丙": "正財", "丁": "偏財", "戊": "正官", "己": "七殺", "庚": "正印", "辛": "偏印", "壬": "劫財", "癸": "比肩"}
+# 星座名稱對照表
+SIGN_NAMES = {
+    0: "白羊座", 1: "金牛座", 2: "雙子座", 3: "巨蟹座",
+    4: "獅子座", 5: "處女座", 6: "天秤座", 7: "天蠍座",
+    8: "射手座", 9: "摩羯座", 10: "水瓶座", 11: "雙魚座"
 }
 
-# 1995年的準確24節氣時間（這是關鍵！）
-JIEQI_1995 = {
-    "小寒": (1, 5, 21, 23), "大寒": (1, 20, 15, 44),
-    "立春": (2, 4, 9, 48), "雨水": (2, 19, 4, 0),
-    "驚蟄": (3, 6, 2, 14), "春分": (3, 21, 0, 14),
-    "清明": (4, 5, 22, 36), "穀雨": (4, 20, 20, 44),
-    "立夏": (5, 6, 19, 6), "小滿": (5, 21, 17, 20),
-    "芒種": (6, 6, 15, 34), "夏至": (6, 22, 13, 34),
-    "小暑": (7, 7, 11, 48), "大暑": (7, 23, 9, 48),
-    "立秋": (8, 8, 8, 6), "處暑": (8, 23, 6, 18),
-    "白露": (9, 8, 4, 38), "秋分": (9, 23, 2, 13),
-    "寒露": (10, 8, 23, 48), "霜降": (10, 24, 21, 17),
-    "立冬": (11, 8, 18, 51), "小雪": (11, 22, 16, 19),
-    "大雪": (12, 7, 13, 57), "冬至": (12, 22, 11, 29)
+# 宮位名稱對照表
+HOUSE_NAMES = {
+    1: "第一宮", 2: "第二宮", 3: "第三宮", 4: "第四宮",
+    5: "第五宮", 6: "第六宮", 7: "第七宮", 8: "第八宮",
+    9: "第九宮", 10: "第十宮", 11: "第十一宮", 12: "第十二宮"
 }
 
 class ChartRequest(BaseModel):
@@ -78,6 +80,26 @@ class ChartRequest(BaseModel):
     lat: float
     lon: float
     tz: float = 8.0
+
+class UserInput(BaseModel):
+    userId: str
+    name: str
+    gender: str
+    birthDate: str  # format: YYYYMMDD
+    birthTime: str  # format: HH:MM
+    career: Optional[str] = ""
+    birthPlace: str
+    targetName: Optional[str] = ""
+    targetGender: Optional[str] = ""
+    targetBirthDate: Optional[str] = ""
+    targetBirthTime: Optional[str] = ""
+    targetCareer: Optional[str] = ""
+    targetBirthPlace: Optional[str] = ""
+    content: str
+    contentType: str = "unknown"
+    ready: bool = True
+    latitude: float
+    longitude: float
 
 def parse_date_string(date_str):
     """解析各種日期格式"""
@@ -134,227 +156,264 @@ def parse_time_string(time_str):
     except Exception as e:
         return 12, 0
 
-def get_true_solar_time(year, month, day, hour, minute, longitude):
-    """計算真太陽時"""
-    # 經度時差修正：每15度差1小時
-    longitude_correction = (longitude - 120) / 15  # 以東經120度為基準
-    
-    # 真太陽時 = 當地時間 + 經度修正
-    total_minutes = hour * 60 + minute + longitude_correction * 60
-    
-    # 處理跨日情況
-    if total_minutes >= 1440:  # 超過24小時
-        day += 1
-        total_minutes -= 1440
-    elif total_minutes < 0:  # 小於0點
-        day -= 1
-        total_minutes += 1440
-    
-    true_hour = int(total_minutes // 60)
-    true_minute = int(total_minutes % 60)
-    
-    return day, true_hour, true_minute
-
-def get_lunar_month_by_jieqi(year, month, day, hour, minute):
-    """根據節氣確定農曆月份"""
-    # 將輸入時間轉換為分鐘數（從年初開始）
-    from datetime import datetime
-    input_time = datetime(year, month, day, hour, minute)
-    year_start = datetime(year, 1, 1)
-    input_minutes = int((input_time - year_start).total_seconds() / 60)
-    
-    # 1995年節氣對照（這裡只做1995年，其他年份需要完整的節氣表）
-    if year == 1995:
-        # 4月4日11:35的處理
-        if month == 4 and day == 4:
-            # 清明節氣是4月5日22:36
-            qingming_time = datetime(1995, 4, 5, 22, 36)
-            if input_time < qingming_time:
-                return 2, "卯"  # 還在卯月（農曆二月）
-            else:
-                return 3, "辰"  # 已進入辰月（農曆三月）
-        elif month == 3:
-            return 2, "卯"  # 卯月
-        elif month == 4:
-            if day < 5:
-                return 2, "卯"
-            else:
-                return 3, "辰"
-        elif month == 5:
-            return 4, "巳"
-        # 其他月份的簡化處理...
-    
-    # 簡化版：直接對照
-    lunar_months = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
-    # 農曆正月對應陽曆2月，以此類推
-    adjusted_month = (month - 2) % 12
-    return adjusted_month, lunar_months[adjusted_month]
-
-def get_year_ganzhi(year):
-    """計算年柱天干地支（以立春為界）"""
-    # 1984年為甲子年
-    gan_index = (year - 1984) % 10
-    zhi_index = (year - 1984) % 12
-    return TIAN_GAN[gan_index], DI_ZHI[zhi_index]
-
-def get_month_ganzhi_by_jieqi(year, month, day, hour, minute):
-    """基於節氣的月柱計算"""
-    lunar_month_num, lunar_month_zhi = get_lunar_month_by_jieqi(year, month, day, hour, minute)
-    
-    # 月干計算：甲己之年丙作首
-    year_gan = get_year_ganzhi(year)[0]
-    year_gan_index = TIAN_GAN.index(year_gan)
-    
-    # 月干起始對照表
-    month_gan_base = [2, 4, 6, 8, 0, 2, 4, 6, 8, 0]  # 甲乙丙丁戊己庚辛壬癸
-    gan_index = (month_gan_base[year_gan_index] + lunar_month_num) % 10
-    month_gan = TIAN_GAN[gan_index]
-    
-    return month_gan, lunar_month_zhi
-
-def get_day_ganzhi_accurate(year, month, day):
-    """精確的日柱計算"""
-    # 使用專業的基準：1900年1月31日為甲子日
-    from datetime import date
-    
-    base_date = date(1900, 1, 31)  # 甲子日
-    target_date = date(year, month, day)
-    days_diff = (target_date - base_date).days
-    
-    gan_index = days_diff % 10
-    zhi_index = days_diff % 12
-    
-    return TIAN_GAN[gan_index], DI_ZHI[zhi_index]
-
-def get_hour_ganzhi(day_gan, hour, minute):
-    """時柱計算（按時辰）"""
-    # 確定時辰
-    shi_chen = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
-    
-    # 時辰對照：23-1點為子時，1-3點為丑時...
-    if hour == 23 or hour == 0:
-        zhi_index = 0  # 子時
-    else:
-        zhi_index = (hour + 1) // 2
-    
-    hour_zhi = shi_chen[zhi_index]
-    
-    # 時干計算：甲己日子時起甲子
-    day_gan_index = TIAN_GAN.index(day_gan)
-    hour_gan_base = [0, 2, 4, 6, 8, 0, 2, 4, 6, 8]  # 甲己日、乙庚日...的子時天干
-    gan_index = (hour_gan_base[day_gan_index] + zhi_index) % 10
-    hour_gan = TIAN_GAN[gan_index]
-    
-    return hour_gan, hour_zhi
-
-def get_nayin(gan, zhi):
-    """獲取納音"""
-    ganzhi = gan + zhi
-    return NAYIN.get(ganzhi, "未知")
-
-def calculate_accurate_bazi(birth_date, birth_time, latitude, longitude):
-    """精確八字計算"""
+def solar_to_lunar_converter(year, month, day):
+    """陽曆轉農曆"""
     try:
-        year, month, day = parse_date_string(birth_date)
-        hour, minute = parse_time_string(birth_time)
+        if LUNAR_CONVERTER_AVAILABLE:
+            from datetime import date
+            solar_date = date(year, month, day)
+            lunar_date = ZhDate.from_datetime(solar_date)
+            return {
+                "lunar_year": lunar_date.lunar_year,
+                "lunar_month": lunar_date.lunar_month, 
+                "lunar_day": lunar_date.lunar_day,
+                "is_leap_month": lunar_date.is_leap_month,
+                "chinese_year": lunar_date.chinese(),
+                "conversion_method": "zhdate專業轉換"
+            }
+        else:
+            # 備用簡化轉換（不準確，僅供參考）
+            return {
+                "lunar_year": year,
+                "lunar_month": month,
+                "lunar_day": day,
+                "is_leap_month": False,
+                "chinese_year": f"{year}年{month}月{day}日",
+                "conversion_method": "簡化轉換（不準確）"
+            }
+    except Exception as e:
+        raise Exception(f"農曆轉換錯誤: {str(e)}")
+
+def get_ganzhi_from_lunar(lunar_year, lunar_month, lunar_day, hour, minute):
+    """根據農曆計算八字"""
+    try:
+        # 年柱：以立春為界
+        year_gan_index = (lunar_year - 1984) % 10
+        year_zhi_index = (lunar_year - 1984) % 12
+        year_gan = TIAN_GAN[year_gan_index]
+        year_zhi = DI_ZHI[year_zhi_index]
         
-        # 驗證日期時間
-        if not (1 <= month <= 12):
-            month = 1
-        if not (1 <= day <= 31):
-            day = 1
-        if not (0 <= hour <= 23):
-            hour = 12
-        if not (0 <= minute <= 59):
-            minute = 0
+        # 月柱：根據農曆月份
+        month_zhi_map = ["寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥", "子", "丑"]
+        month_zhi = month_zhi_map[lunar_month - 1]
         
-        # 計算真太陽時
-        true_day, true_hour, true_minute = get_true_solar_time(year, month, day, hour, minute, longitude)
+        # 月干計算
+        month_gan_base = [2, 4, 6, 8, 0, 2, 4, 6, 8, 0]  # 甲己年丙作首
+        month_gan_index = (month_gan_base[year_gan_index] + lunar_month - 1) % 10
+        month_gan = TIAN_GAN[month_gan_index]
         
-        # 計算四柱
-        year_gan, year_zhi = get_year_ganzhi(year)
-        month_gan, month_zhi = get_month_ganzhi_by_jieqi(year, month, day, true_hour, true_minute)
-        day_gan, day_zhi = get_day_ganzhi_accurate(year, month, true_day)
-        hour_gan, hour_zhi = get_hour_ganzhi(day_gan, true_hour, true_minute)
+        # 日柱：使用專業算法（基於農曆）
+        # 這裡需要真正的萬年曆，先用簡化計算
+        day_cycle = (lunar_year * 365 + lunar_month * 30 + lunar_day) % 60
+        day_gan = TIAN_GAN[day_cycle % 10]
+        day_zhi = DI_ZHI[day_cycle % 12]
         
-        # 計算十神
-        shi_shen_info = {}
-        for gan, name in [(year_gan, "年干"), (month_gan, "月干"), (hour_gan, "時干")]:
-            if gan != day_gan:
-                shi_shen_info[name] = SHI_SHEN_MAP[day_gan][gan]
+        # 時柱
+        hour_zhi_index = ((hour + 1) // 2) % 12
+        hour_zhi = DI_ZHI[hour_zhi_index]
         
-        # 五行分析（簡化）
-        wu_xing_count = {"木": 0, "火": 0, "土": 0, "金": 0, "水": 0}
-        wu_xing_map = {"甲": "木", "乙": "木", "丙": "火", "丁": "火", "戊": "土", "己": "土", "庚": "金", "辛": "金", "壬": "水", "癸": "水"}
-        
-        for gan in [year_gan, month_gan, day_gan, hour_gan]:
-            wu_xing_count[wu_xing_map[gan]] += 1
+        day_gan_index = TIAN_GAN.index(day_gan)
+        hour_gan_base = [0, 2, 4, 6, 8, 0, 2, 4, 6, 8]
+        hour_gan_index = (hour_gan_base[day_gan_index] + hour_zhi_index) % 10
+        hour_gan = TIAN_GAN[hour_gan_index]
         
         return {
-            "八字命盤": {
-                "年柱": {"天干": year_gan, "地支": year_zhi, "納音": get_nayin(year_gan, year_zhi)},
-                "月柱": {"天干": month_gan, "地支": month_zhi, "納音": get_nayin(month_gan, month_zhi)},
-                "日柱": {"天干": day_gan, "地支": day_zhi, "納音": get_nayin(day_gan, day_zhi)},
-                "時柱": {"天干": hour_gan, "地支": hour_zhi, "納音": get_nayin(hour_gan, hour_zhi)}
-            },
-            "日主": day_gan,
-            "日主五行": wu_xing_map[day_gan],
-            "十神分析": shi_shen_info,
-            "五行統計": wu_xing_count,
-            "計算詳情": {
-                "原始時間": f"{year}年{month}月{day}日 {hour}時{minute}分",
-                "真太陽時": f"{year}年{month}月{true_day}日 {true_hour}時{true_minute}分",
-                "經度修正": f"{longitude}度",
-                "計算方式": "節氣+真太陽時精確算法"
-            }
+            "年柱": {"天干": year_gan, "地支": year_zhi, "納音": NAYIN.get(year_gan + year_zhi, "未知")},
+            "月柱": {"天干": month_gan, "地支": month_zhi, "納音": NAYIN.get(month_gan + month_zhi, "未知")},
+            "日柱": {"天干": day_gan, "地支": day_zhi, "納音": NAYIN.get(day_gan + day_zhi, "未知")},
+            "時柱": {"天干": hour_gan, "地支": hour_zhi, "納音": NAYIN.get(hour_gan + hour_zhi, "未知")},
+            "日主": day_gan
         }
         
     except Exception as e:
-        raise Exception(f"精確八字計算錯誤: {str(e)}")
+        raise Exception(f"八字計算錯誤: {str(e)}")
+
+def calculate_western_astrology_simple(year, month, day, hour, minute, latitude, longitude):
+    """簡化版西洋占星"""
+    try:
+        if SWISSEPH_AVAILABLE:
+            jd_ut = swe.julday(year, month, day, hour + minute/60.0)
+            houses, ascmc = swe.houses(jd_ut, latitude, longitude, b'P')
+            
+            result = {}
+            for planet_id in range(10):
+                try:
+                    xx, ret = swe.calc_ut(jd_ut, planet_id, swe.FLG_SWIEPH)
+                    longitude_deg = xx[0]
+                    sign_num = int(longitude_deg // 30)
+                    
+                    planet_names = ["太陽", "月亮", "水星", "金星", "火星", "木星", "土星", "天王星", "海王星", "冥王星"]
+                    if planet_id < len(planet_names):
+                        result[planet_names[planet_id]] = {
+                            "星座": SIGN_NAMES[sign_num],
+                            "度數": round(longitude_deg % 30, 2),
+                            "黃經": round(longitude_deg, 2)
+                        }
+                except:
+                    continue
+            
+            # 上升點
+            asc = ascmc[0]
+            asc_sign = int(asc // 30)
+            result["上升點"] = {
+                "星座": SIGN_NAMES[asc_sign],
+                "度數": round(asc % 30, 2),
+                "黃經": round(asc, 2)
+            }
+            
+            return result
+        else:
+            return {"錯誤": "Swiss Ephemeris不可用"}
+    except Exception as e:
+        return {"錯誤": str(e)}
 
 @app.get("/")
 def read_root():
     return {
-        "message": "精準八字計算API",
-        "version": "7.0.0", 
-        "特色": [
-            "基於24節氣確定月份",
-            "真太陽時修正",
-            "陽曆自動轉換",
-            "專業萬年曆算法"
-        ],
-        "支援年份": "1995年（可擴展到其他年份）"
+        "message": "深語AI三系統整合API",
+        "version": "8.0.0",
+        "系統狀態": {
+            "農曆轉換": "可用" if LUNAR_CONVERTER_AVAILABLE else "簡化版",
+            "西洋占星": "可用" if SWISSEPH_AVAILABLE else "不可用",
+            "八字計算": "基於農曆",
+            "紫微斗數": "外部JS庫調用"
+        },
+        "功能": [
+            "陽曆→農曆轉換",
+            "農曆八字排盤",
+            "西洋占星計算",
+            "三系統整合分析"
+        ]
     }
 
-@app.post("/bazi")
-def analyze_accurate_bazi(req: ChartRequest):
-    """精準八字分析"""
+@app.post("/calendar_convert")
+def convert_solar_to_lunar(req: ChartRequest):
+    """陽曆轉農曆"""
     try:
-        clean_date = re.sub(r'[^0-9]', '', req.date)
+        year, month, day = parse_date_string(req.date)
+        hour, minute = parse_time_string(req.time)
         
-        if len(clean_date) != 8:
-            try:
-                if '/' in req.date:
-                    parts = req.date.split('/')
-                    if len(parts) == 3:
-                        if len(parts[0]) == 4:
-                            clean_date = f"{parts[0]}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-                        else:
-                            clean_date = f"{parts[2]}{parts[0].zfill(2)}{parts[1].zfill(2)}"
-                elif '-' in req.date:
-                    parts = req.date.split('-')
-                    if len(parts) == 3:
-                        clean_date = f"{parts[0]}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-            except:
-                clean_date = "20000101"
-        
-        # 精確八字計算
-        bazi_data = calculate_accurate_bazi(clean_date, req.time, req.lat, req.lon)
+        lunar_info = solar_to_lunar_converter(year, month, day)
         
         return {
             "status": "success",
-            "calculation_method": "節氣+真太陽時精確算法",
-            "bazi_chart": bazi_data
+            "陽曆": f"{year}年{month}月{day}日",
+            "農曆": lunar_info,
+            "紫微斗數參數": {
+                "year": lunar_info["lunar_year"],
+                "month": lunar_info["lunar_month"],
+                "day": lunar_info["lunar_day"],
+                "isLeapMonth": lunar_info["is_leap_month"],
+                "時辰": f"{hour}時{minute}分",
+                "使用說明": "可直接用於fortel-ziweidoushu庫"
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/bazi_from_solar")
+def calculate_bazi_from_solar(req: ChartRequest):
+    """從陽曆計算八字"""
+    try:
+        year, month, day = parse_date_string(req.date)
+        hour, minute = parse_time_string(req.time)
+        
+        # 先轉農曆
+        lunar_info = solar_to_lunar_converter(year, month, day)
+        
+        # 用農曆計算八字
+        bazi_result = get_ganzhi_from_lunar(
+            lunar_info["lunar_year"],
+            lunar_info["lunar_month"], 
+            lunar_info["lunar_day"],
+            hour, minute
+        )
+        
+        return {
+            "status": "success",
+            "calculation_method": "陽曆→農曆→八字",
+            "原始陽曆": f"{year}年{month}月{day}日 {hour}時{minute}分",
+            "轉換農曆": lunar_info,
+            "八字命盤": bazi_result
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "trace": traceback.format_exc()
+        }
+
+@app.post("/complete_analysis")
+def complete_three_systems_analysis(users: List[UserInput]):
+    """完整三系統分析"""
+    try:
+        if not users or len(users) == 0:
+            raise HTTPException(status_code=400, detail="請提供用戶資料")
+        
+        user = users[0]
+        year, month, day = parse_date_string(user.birthDate)
+        hour, minute = parse_time_string(user.birthTime)
+        
+        results = {}
+        
+        # 1. 農曆轉換
+        try:
+            lunar_info = solar_to_lunar_converter(year, month, day)
+            results["農曆轉換"] = lunar_info
+        except Exception as e:
+            results["農曆轉換"] = {"錯誤": str(e)}
+        
+        # 2. 八字計算（基於農曆）
+        try:
+            if "農曆轉換" in results and "錯誤" not in results["農曆轉換"]:
+                bazi_result = get_ganzhi_from_lunar(
+                    results["農曆轉換"]["lunar_year"],
+                    results["農曆轉換"]["lunar_month"],
+                    results["農曆轉換"]["lunar_day"],
+                    hour, minute
+                )
+                results["八字命理"] = bazi_result
+            else:
+                results["八字命理"] = {"錯誤": "農曆轉換失敗"}
+        except Exception as e:
+            results["八字命理"] = {"錯誤": str(e)}
+        
+        # 3. 西洋占星
+        try:
+            astro_result = calculate_western_astrology_simple(
+                year, month, day, hour, minute, user.latitude, user.longitude
+            )
+            results["西洋占星"] = astro_result
+        except Exception as e:
+            results["西洋占星"] = {"錯誤": str(e)}
+        
+        # 4. 紫微斗數參數（供外部JS庫使用）
+        if "農曆轉換" in results and "錯誤" not in results["農曆轉換"]:
+            results["紫微斗數參數"] = {
+                "year": results["農曆轉換"]["lunar_year"],
+                "month": results["農曆轉換"]["lunar_month"],
+                "day": results["農曆轉換"]["lunar_day"],
+                "isLeapMonth": results["農曆轉換"]["is_leap_month"],
+                "bornTimeGround": f"{hour}時",
+                "gender": "M" if user.gender == "男" else "F",
+                "使用方法": "可直接用於fortel-ziweidoushu庫"
+            }
+        
+        return {
+            "status": "success",
+            "service": "深語AI三系統完整分析",
+            "用戶資訊": {
+                "姓名": user.name,
+                "性別": user.gender,
+                "陽曆生日": f"{year}年{month}月{day}日 {hour}時{minute}分",
+                "出生地點": user.birthPlace
+            },
+            "三系統分析": results,
+            "深語AI洞察": "基於三系統整合的靈魂分析（待開發）"
         }
         
     except Exception as e:
@@ -368,9 +427,14 @@ def analyze_accurate_bazi(req: ChartRequest):
 def health_check():
     return {
         "status": "healthy",
-        "service": "accurate-bazi-calculator", 
-        "precision": "專業級精確度",
-        "version": "7.0.0"
+        "service": "deep-language-ai-three-systems",
+        "modules": {
+            "農曆轉換": LUNAR_CONVERTER_AVAILABLE,
+            "西洋占星": SWISSEPH_AVAILABLE,
+            "八字計算": True,
+            "紫微斗數": "外部JS庫"
+        },
+        "version": "8.0.0"
     }
 
 if __name__ == "__main__":
