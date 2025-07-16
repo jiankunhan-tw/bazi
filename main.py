@@ -565,13 +565,27 @@ def analyze_user_bazi(users: List[UserInput]):
         return {
             "status": "success",
             "service": "全日期八字分析",
-            "calculation_method": "lunardate + 專業八字算法",
+            "calculation_method": "基於農曆的八字計算",
             "用戶資訊": {
-                "姓名": user.name,
-                "性別": user.gender,
-                "出生日期": f"{user.birthDate[:4]}-{user.birthDate[4:6]}-{user.birthDate[6:8]}",
-                "出生時間": user.birthTime,
-                "出生地點": user.birthPlace
+                "userId": user.userId,
+                "name": user.name,
+                "gender": user.gender,
+                "birthDate": f"{user.birthDate[:4]}-{user.birthDate[4:6]}-{user.birthDate[6:8]}",
+                "birthTime": user.birthTime,
+                "career": user.career if user.career else "未提供",
+                "birthPlace": user.birthPlace,
+                "經緯度": f"{user.latitude}, {user.longitude}",
+                "content": user.content,
+                "contentType": user.contentType,
+                "ready": user.ready
+            },
+            "對象資訊": {
+                "targetName": user.targetName if user.targetName else "無",
+                "targetGender": user.targetGender if user.targetGender else "無",
+                "targetBirthDate": user.targetBirthDate if user.targetBirthDate else "無",
+                "targetBirthTime": user.targetBirthTime if user.targetBirthTime else "無",
+                "targetCareer": user.targetCareer if user.targetCareer else "無",
+                "targetBirthPlace": user.targetBirthPlace if user.targetBirthPlace else "無"
             },
             "八字分析": bazi_data
         }
