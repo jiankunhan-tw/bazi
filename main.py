@@ -1,10 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import traceback
-from typing import List, Optional, Union
+from typing import List, Dict, Any
 import re
-from datetime import date
 
 app = FastAPI(title="全日期八字API", description="支援所有日期的八字計算系統", version="11.0.0")
 
@@ -26,7 +24,7 @@ except ImportError:
     LUNARDATE_AVAILABLE = False
     print("lunardate不可用，使用備用計算")
 
-# 天干地支等常數（原樣保留）
+# 天干地支等常數
 TIAN_GAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
 DI_ZHI   = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
 
@@ -69,54 +67,26 @@ DIZHI_CANGAN = {
 
 WU_XING = {"甲":"木","乙":"木","丙":"火","丁":"火","戊":"土","己":"土","庚":"金","辛":"金","壬":"水","癸":"水"}
 
-# 修復 Pydantic 模型定義
-class ChartRequest(BaseModel):
-    date: str
-    time: str
-    lat: float
-    lon: float
-    tz: float = 8.0
-
-class UserInput(BaseModel):
-    userId: str
-    name: str
-    gender: str
-    birthDate: str
-    birthTime: str
-    career: str = ""  # 改為預設值而非 Optional
-    birthPlace: str
-    targetName: str = ""
-    targetGender: str = ""
-    targetBirthDate: str = ""
-    targetBirthTime: str = ""
-    targetCareer: str = ""
-    targetBirthPlace: str = ""
-    content: str
-    contentType: str = "unknown"
-    ready: bool = True
-    latitude: float
-    longitude: float
-
 def parse_date_string(date_str: str):
     """解析各種日期格式"""
     try:
-        clean = re.sub(r'[^0-9]', '', date_str)
+        clean = re.sub(r'[^0-9]', '', str(date_str))
         if len(clean) == 8:
             return int(clean[:4]), int(clean[4:6]), int(clean[6:8])
-        if '/' in date_str:
-            parts = date_str.split('/')
-            if len(parts[0]) == 4:  # YYYY/MM/DD
+        if '/' in str(date_str):
+            parts = str(date_str).split('/')
+            if len(parts[0]) == 4:
                 return int(parts[0]), int(parts[1]), int(parts[2])
-            else:  # MM/DD/YYYY or DD/MM/YYYY
+            else:
                 return int(parts[2]), int(parts[0]), int(parts[1])
-        if '-' in date_str:
-            parts = date_str.split('-')
+        if '-' in str(date_str):
+            parts = str(date_str).split('-')
             return int(parts[0]), int(parts[1]), int(parts[2])
         raise ValueError(f"無法解析日期格式: {date_str}")
     except Exception as e:
         raise ValueError(f"日期解析錯誤: {date_str} - {str(e)}")
 
-def parse_time_string(time_str: str):
+def parse_time_string(time_str):
     """解析時間格式"""
     try:
         t = str(time_str).strip().replace(' ', '')
@@ -146,7 +116,6 @@ def solar_to_lunar_converter(year, month, day):
         except Exception:
             pass
     
-    # 備用簡化轉換
     return {
         "lunar_year": year, 
         "lunar_month": month, 
@@ -167,39 +136,33 @@ def get_month_ganzhi_from_lunar(lunar_year, lunar_month, lunar_day):
     month_zhi = month_zhi_map[(lunar_month - 1) % 12]
     year_gan = get_year_ganzhi(lunar_year)[0]
     yg_idx = TIAN_GAN.index(year_gan)
-    start = [2,4,6,8,0,2,4,6,8,0]  # 正月天干
+    start = [2,4,6,8,0,2,4,6,8,0]
     gan = TIAN_GAN[(start[yg_idx] + (lunar_month - 1)) % 10]
     return gan, month_zhi
 
 def get_day_ganzhi_from_lunar(lunar_year, lunar_month, lunar_day):
     """計算日柱干支"""
-    # 簡化計算，實際應該用更精確的算法
     total = (lunar_year - 1900) * 365 + lunar_month * 30 + lunar_day
     return TIAN_GAN[total % 10], DI_ZHI[total % 12]
 
 def get_hour_ganzhi_corrected(day_gan, hour, minute):
     """正確的時辰計算"""
-    # 時辰對應表
     if hour == 23 or hour == 0:
-        zhi_index = 0  # 子時
+        zhi_index = 0
     else:
         zhi_index = (hour + 1) // 2
     
     hour_zhi = DI_ZHI[zhi_index % 12]
-    
-    # 根據日干推算時干
     day_idx = TIAN_GAN.index(day_gan)
-    base = [0,2,4,6,8,0,2,4,6,8]  # 甲日子時起甲子
+    base = [0,2,4,6,8,0,2,4,6,8]
     hour_gan = TIAN_GAN[(base[day_idx] + zhi_index) % 10]
     
     return hour_gan, hour_zhi
 
 def get_nayin(gan, zhi): 
-    """獲取納音"""
     return NAYIN.get(gan + zhi, "未知")
 
 def calculate_shi_shen(day_gan, target_gan): 
-    """計算十神"""
     return SHI_SHEN_MAP.get(day_gan, {}).get(target_gan, "未知")
 
 def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitude=None):
@@ -208,11 +171,9 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
         year, month, day = parse_date_string(birth_date)
         hour, minute = parse_time_string(birth_time)
 
-        # 農曆轉換
         lunar = solar_to_lunar_converter(year, month, day)
         lunar_year, lunar_month, lunar_day = lunar["lunar_year"], lunar["lunar_month"], lunar["lunar_day"]
 
-        # 四柱干支
         year_gan, year_zhi = get_year_ganzhi(lunar_year)
         month_gan, month_zhi = get_month_ganzhi_from_lunar(lunar_year, lunar_month, lunar_day)
         day_gan, day_zhi = get_day_ganzhi_from_lunar(lunar_year, lunar_month, lunar_day)
@@ -225,7 +186,6 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
             "時柱": {"天干": hour_gan, "地支": hour_zhi, "納音": get_nayin(hour_gan, hour_zhi), "藏干": DIZHI_CANGAN[hour_zhi]},
         }
 
-        # 十神分析
         shi_shen = {}
         for name, data in bazi.items():
             gan = data["天干"]
@@ -235,7 +195,6 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
                 if c != day_gan:
                     shi_shen[f"{name}支藏干{i+1}"] = calculate_shi_shen(day_gan, c)
 
-        # 五行統計
         wx = {"木": 0, "火": 0, "土": 0, "金": 0, "水": 0}
         for data in bazi.values():
             wx[WU_XING[data["天干"]]] += 2
@@ -246,7 +205,6 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
         total = sum(wx.values()) or 1
         body_strength = "身強" if wx[day_wx] / total > 0.3 else "身弱"
 
-        # 大運計算
         da_yun = []
         for i in range(8):
             dy_g = TIAN_GAN[(TIAN_GAN.index(month_gan) + i + 1) % 10]
@@ -293,9 +251,15 @@ def read_root():
     }
 
 @app.post("/bazi")
-def calculate_bazi_endpoint(req: ChartRequest):
+def calculate_bazi_endpoint(req: Dict[str, Any]):
+    """八字計算端點 - 使用字典而非 Pydantic 模型"""
     try:
-        data = calculate_comprehensive_bazi(req.date, req.time, req.lat, req.lon)
+        date = req.get("date", "")
+        time = req.get("time", "")
+        lat = float(req.get("lat", 0))
+        lon = float(req.get("lon", 0))
+        
+        data = calculate_comprehensive_bazi(date, time, lat, lon)
         return {
             "status": "success",
             "calculation_method": "lunardate + 專業八字算法",
@@ -310,34 +274,44 @@ def calculate_bazi_endpoint(req: ChartRequest):
         }
 
 @app.post("/analyze")
-def analyze_user_bazi(users: List[UserInput]):
+def analyze_user_bazi(users: List[Dict[str, Any]]):
+    """用戶八字分析 - 使用字典而非 Pydantic 模型"""
     try:
         if not users:
             raise HTTPException(status_code=400, detail="請提供用戶資料")
         
         u = users[0]
-        data = calculate_comprehensive_bazi(u.birthDate, u.birthTime, u.latitude, u.longitude)
+        birth_date = u.get("birthDate", "")
+        birth_time = u.get("birthTime", "")
+        latitude = float(u.get("latitude", 0))
+        longitude = float(u.get("longitude", 0))
+        
+        data = calculate_comprehensive_bazi(birth_date, birth_time, latitude, longitude)
         
         return {
             "status": "success",
             "service": "全日期八字分析",
             "calculation_method": "基於農曆的八字計算",
             "用戶資訊": {
-                "userId": u.userId, "name": u.name, "gender": u.gender,
-                "birthDate": f"{u.birthDate[:4]}-{u.birthDate[4:6]}-{u.birthDate[6:8]}",
-                "birthTime": u.birthTime, "career": u.career or "未提供", 
-                "birthPlace": u.birthPlace,
-                "經緯度": f"{u.latitude}, {u.longitude}", 
-                "content": u.content, "contentType": u.contentType, 
-                "ready": u.ready
+                "userId": u.get("userId", ""),
+                "name": u.get("name", ""), 
+                "gender": u.get("gender", ""),
+                "birthDate": f"{birth_date[:4]}-{birth_date[4:6]}-{birth_date[6:8]}" if len(birth_date) >= 8 else birth_date,
+                "birthTime": birth_time,
+                "career": u.get("career", "未提供"),
+                "birthPlace": u.get("birthPlace", ""),
+                "經緯度": f"{latitude}, {longitude}",
+                "content": u.get("content", ""),
+                "contentType": u.get("contentType", "unknown"),
+                "ready": u.get("ready", True)
             },
             "對象資訊": {
-                "targetName": u.targetName or "無",
-                "targetGender": u.targetGender or "無",
-                "targetBirthDate": u.targetBirthDate or "無",
-                "targetBirthTime": u.targetBirthTime or "無",
-                "targetCareer": u.targetCareer or "無",
-                "targetBirthPlace": u.targetBirthPlace or "無"
+                "targetName": u.get("targetName", "無"),
+                "targetGender": u.get("targetGender", "無"),
+                "targetBirthDate": u.get("targetBirthDate", "無"),
+                "targetBirthTime": u.get("targetBirthTime", "無"),
+                "targetCareer": u.get("targetCareer", "無"),
+                "targetBirthPlace": u.get("targetBirthPlace", "無")
             },
             "八字分析": data
         }
