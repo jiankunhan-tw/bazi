@@ -7,7 +7,7 @@ import uvicorn
 import re
 from datetime import datetime, date
 
-app = FastAPI(title="全日期八字API", description="支援所有日期的八字計算系統", version="12.0.0")
+app = FastAPI(title="全日期八字API", description="支援所有日期的八字計算系統", version="13.0.0")
 
 # 添加 CORS 中間件
 app.add_middleware(
@@ -159,57 +159,41 @@ def get_year_ganzhi(year):
 
 def get_month_ganzhi(year, month, day):
     """計算月柱天干地支（考慮節氣）"""
-    # 簡化節氣表（實際應該更精確）
+    # 簡化節氣表
     jieqi_days = {
-        1: 6,   # 小寒
-        2: 4,   # 立春
-        3: 6,   # 驚蟄
-        4: 5,   # 清明
-        5: 6,   # 立夏
-        6: 6,   # 芒種
-        7: 7,   # 小暑
-        8: 8,   # 立秋
-        9: 8,   # 白露
-        10: 8,  # 寒露
-        11: 7,  # 立冬
-        12: 7   # 大雪
+        1: 6, 2: 4, 3: 6, 4: 5, 5: 6, 6: 6, 
+        7: 7, 8: 8, 9: 8, 10: 8, 11: 7, 12: 7
     }
     
     # 確定農曆月份（以節氣為準）
     if month == 1:
-        lunar_month = 12 if day < jieqi_days[1] else 1  # 丑月或寅月
+        lunar_month = 12 if day < jieqi_days[1] else 1
     elif month == 2:
-        lunar_month = 1 if day < jieqi_days[2] else 2   # 寅月或卯月
+        lunar_month = 1 if day < jieqi_days[2] else 2
     else:
-        if day >= jieqi_days[month]:
-            lunar_month = month - 1  # 當前節氣後
-        else:
-            lunar_month = month - 2  # 當前節氣前
+        lunar_month = month - 1 if day >= jieqi_days[month] else month - 2
     
-    # 調整為1-12範圍，對應寅-丑
     lunar_month = ((lunar_month - 1) % 12) + 1
     
-    # 月支：寅=1, 卯=2, ..., 丑=12
+    # 月支對應表
     month_zhi_map = ["寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥", "子", "丑"]
     month_zhi = month_zhi_map[lunar_month - 1]
     
-    # 月干計算：甲己之年丙作首
+    # 月干計算
     year_gan = get_year_ganzhi(year)[0]
     year_gan_index = TIAN_GAN.index(year_gan)
-    month_gan_base = [2, 4, 6, 8, 0, 2, 4, 6, 8, 0]  # 對應甲乙丙丁戊己庚辛壬癸年的正月天干
+    month_gan_base = [2, 4, 6, 8, 0, 2, 4, 6, 8, 0]
     gan_index = (month_gan_base[year_gan_index] + lunar_month - 1) % 10
     month_gan = TIAN_GAN[gan_index]
     
     return month_gan, month_zhi
 
 def get_day_ganzhi(year, month, day):
-    """計算日柱天干地支（使用標準算法）"""
-    # 使用公曆基準日計算
+    """計算日柱天干地支"""
     base_date = date(2000, 1, 1)  # 戊午日
     target_date = date(year, month, day)
     days_diff = (target_date - base_date).days
     
-    # 基準：2000年1月1日 = 戊午日（天干戊=4，地支午=6）
     base_gan = 4  # 戊
     base_zhi = 6  # 午
     
@@ -219,34 +203,48 @@ def get_day_ganzhi(year, month, day):
     return TIAN_GAN[gan_index], DI_ZHI[zhi_index]
 
 def get_hour_ganzhi(day_gan, hour, minute):
-    """計算時柱天干地支（修正時辰判斷）"""
-    # 正確的時辰對照表
-    # 子時：23:00-01:00 (前一天23點到當天1點)
-    # 丑時：01:00-03:00
-    # 寅時：03:00-05:00
-    # 卯時：05:00-07:00
-    # 辰時：07:00-09:00
-    # 巳時：09:00-11:00
-    # 午時：11:00-13:00  ← 11點是午時！
-    # 未時：13:00-15:00
-    # 申時：15:00-17:00
-    # 酉時：17:00-19:00
-    # 戌時：19:00-21:00
-    # 亥時：21:00-23:00
+    """計算時柱天干地支（完整修正所有时辰）"""
+    # 标准时辰划分（每个时辰2小时，跨越两个整点小时）：
+    # 子時：23:00-00:59 (前一天23点到当天0点59分)
+    # 丑時：01:00-02:59, 寅時：03:00-04:59, 卯時：05:00-06:59
+    # 辰時：07:00-08:59, 巳時：09:00-10:59, 午時：11:00-12:59
+    # 未時：13:00-14:59, 申時：15:00-16:59, 酉時：17:00-18:59
+    # 戌時：19:00-20:59, 亥時：21:00-22:59
     
-    if hour == 23:
-        zhi_index = 0  # 子時
-    elif hour == 0:
-        zhi_index = 0  # 子時
+    # 根据小时确定时辰地支索引
+    if hour == 23 or hour == 0:
+        zhi_index = 0  # 子时
+    elif 1 <= hour <= 2:
+        zhi_index = 1  # 丑时
+    elif 3 <= hour <= 4:
+        zhi_index = 2  # 寅时
+    elif 5 <= hour <= 6:
+        zhi_index = 3  # 卯时
+    elif 7 <= hour <= 8:
+        zhi_index = 4  # 辰时
+    elif 9 <= hour <= 10:
+        zhi_index = 5  # 巳时
+    elif 11 <= hour <= 12:
+        zhi_index = 6  # 午时
+    elif 13 <= hour <= 14:
+        zhi_index = 7  # 未时
+    elif 15 <= hour <= 16:
+        zhi_index = 8  # 申时
+    elif 17 <= hour <= 18:
+        zhi_index = 9  # 酉时
+    elif 19 <= hour <= 20:
+        zhi_index = 10  # 戌时
+    elif 21 <= hour <= 22:
+        zhi_index = 11  # 亥时
     else:
-        # 1-22點的計算
-        zhi_index = (hour + 1) // 2
+        zhi_index = 6  # 默认午时
     
     hour_zhi = DI_ZHI[zhi_index]
     
-    # 時干計算：甲己日子時起甲子
+    # 時干計算：甲己日子時起甲子，乙庚日子時起丙子，...
     day_gan_index = TIAN_GAN.index(day_gan)
-    hour_gan_base = [0, 2, 4, 6, 8, 0, 2, 4, 6, 8]  # 甲己、乙庚、丙辛、丁壬、戊癸日的子時天干
+    # 各日干对应的子时天干起始索引
+    hour_gan_base = [0, 2, 4, 6, 8, 0, 2, 4, 6, 8]  # 甲己乙庚丙辛丁壬戊癸
     gan_index = (hour_gan_base[day_gan_index] + zhi_index) % 10
     hour_gan = TIAN_GAN[gan_index]
     
@@ -290,17 +288,13 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
         year, month, day = parse_date_string(birth_date)
         hour, minute = parse_time_string(birth_time)
         
-        # 驗證日期時間
-        if not (1 <= month <= 12):
-            month = 1
-        if not (1 <= day <= 31):
-            day = 1
-        if not (0 <= hour <= 23):
-            hour = 12
-        if not (0 <= minute <= 59):
-            minute = 0
+        # 驗證數據
+        if not (1 <= month <= 12): month = 1
+        if not (1 <= day <= 31): day = 1
+        if not (0 <= hour <= 23): hour = 12
+        if not (0 <= minute <= 59): minute = 0
         
-        # 計算四柱（基於陽曆節氣法）
+        # 計算四柱
         year_gan, year_zhi = get_year_ganzhi(year)
         month_gan, month_zhi = get_month_ganzhi(year, month, day)
         day_gan, day_zhi = get_day_ganzhi(year, month, day)
@@ -308,30 +302,10 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
         
         # 組成八字
         bazi_pillars = {
-            "年柱": {
-                "天干": year_gan,
-                "地支": year_zhi,
-                "納音": get_nayin(year_gan, year_zhi),
-                "藏干": DIZHI_CANGAN[year_zhi]
-            },
-            "月柱": {
-                "天干": month_gan,
-                "地支": month_zhi,
-                "納音": get_nayin(month_gan, month_zhi),
-                "藏干": DIZHI_CANGAN[month_zhi]
-            },
-            "日柱": {
-                "天干": day_gan,
-                "地支": day_zhi,
-                "納音": get_nayin(day_gan, day_zhi),
-                "藏干": DIZHI_CANGAN[day_zhi]
-            },
-            "時柱": {
-                "天干": hour_gan,
-                "地支": hour_zhi,
-                "納音": get_nayin(hour_gan, hour_zhi),
-                "藏干": DIZHI_CANGAN[hour_zhi]
-            }
+            "年柱": {"天干": year_gan, "地支": year_zhi, "納音": get_nayin(year_gan, year_zhi), "藏干": DIZHI_CANGAN[year_zhi]},
+            "月柱": {"天干": month_gan, "地支": month_zhi, "納音": get_nayin(month_gan, month_zhi), "藏干": DIZHI_CANGAN[month_zhi]},
+            "日柱": {"天干": day_gan, "地支": day_zhi, "納音": get_nayin(day_gan, day_zhi), "藏干": DIZHI_CANGAN[day_zhi]},
+            "時柱": {"天干": hour_gan, "地支": hour_zhi, "納音": get_nayin(hour_gan, hour_zhi), "藏干": DIZHI_CANGAN[hour_zhi]}
         }
         
         # 計算十神
@@ -341,7 +315,6 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
             if gan != day_gan:
                 shi_shen_info[f"{pillar_name}天干"] = calculate_shi_shen(day_gan, gan)
             
-            # 地支藏干十神
             cangan_list = pillar_data["藏干"]
             for i, cangan in enumerate(cangan_list):
                 if cangan != day_gan:
@@ -350,30 +323,22 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
         # 五行統計
         wu_xing_count = {"木": 0, "火": 0, "土": 0, "金": 0, "水": 0}
         
-        # 計算天干五行
         for pillar_data in bazi_pillars.values():
             gan = pillar_data["天干"]
             wu_xing_count[WU_XING[gan]] += 2
             
-            # 地支藏干五行
             cangan_list = pillar_data["藏干"]
             for cangan in cangan_list:
                 wu_xing_count[WU_XING[cangan]] += 1
         
-        # 日主五行
         day_wu_xing = WU_XING[day_gan]
-        
-        # 基本格局判斷
         day_strength = wu_xing_count[day_wu_xing]
         total_strength = sum(wu_xing_count.values())
         strength_ratio = day_strength / total_strength
         
-        if strength_ratio > 0.3:
-            body_strength = "身強"
-        else:
-            body_strength = "身弱"
+        body_strength = "身強" if strength_ratio > 0.3 else "身弱"
         
-        # 簡化的大運計算
+        # 大運計算
         da_yun_list = []
         for i in range(8):
             da_yun_gan = TIAN_GAN[(TIAN_GAN.index(month_gan) + i + 1) % 10]
@@ -397,14 +362,8 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
             "五行統計": wu_xing_count,
             "大運": da_yun_list,
             "農曆資訊": lunar_info,
-            "陽曆資訊": {
-                "年": year,
-                "月": month,
-                "日": day,
-                "時": hour,
-                "分": minute
-            },
-            "計算方法": "標準節氣法八字計算（修正時辰判斷）",
+            "陽曆資訊": {"年": year, "月": month, "日": day, "時": hour, "分": minute},
+            "計算方法": "標準節氣法八字計算",
             "精確度": "高精度"
         }
         
@@ -414,110 +373,73 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
 @app.get("/")
 def read_root():
     return {
-        "message": "全日期八字API - 修正版",
-        "version": "12.0.0",
-        "修正內容": ["修正11點時辰計算錯誤", "保持標準節氣法算法", "移除所有硬編碼特例"],
-        "系統狀態": {
-            "lunardate": "可用" if LUNARDATE_AVAILABLE else "不可用",
-            "支援日期範圍": "1900-2099年" if LUNARDATE_AVAILABLE else "有限支援"
-        },
-        "支援功能": [
-            "陽曆轉農曆",
-            "四柱八字排盤",
-            "十神分析",
-            "五行統計",
-            "大運計算",
-            "納音五行",
-            "藏干分析",
-            "身強身弱判斷"
-        ]
+        "message": "全日期八字API - 穩定版",
+        "version": "13.0.0",
+        "系統狀態": {"lunardate": "可用" if LUNARDATE_AVAILABLE else "不可用"},
+        "支援功能": ["陽曆轉農曆", "四柱八字排盤", "十神分析", "五行統計", "大運計算"]
     }
 
 @app.post("/bazi")
 def calculate_bazi_endpoint(req: ChartRequest):
-    """全日期八字計算端點"""
+    """八字計算端點"""
     try:
         bazi_data = calculate_comprehensive_bazi(req.date, req.time, req.lat, req.lon)
-        return {
-            "status": "success",
-            "calculation_method": "標準節氣法（修正版）",
-            "precision": "高精度",
-            "bazi_chart": bazi_data
-        }
+        return {"status": "success", "bazi_chart": bazi_data}
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "trace": traceback.format_exc()
-        }
+        return {"status": "error", "message": str(e)}
 
 @app.post("/analyze")
 def analyze_user_bazi(users: List[UserInput]):
     """用戶八字分析端點"""
     try:
-        if not users or len(users) == 0:
+        if not users:
             raise HTTPException(status_code=400, detail="請提供用戶資料")
         
         user = users[0]
-        bazi_data = calculate_comprehensive_bazi(
-            user.birthDate,
-            user.birthTime,
-            user.latitude,
-            user.longitude
-        )
+        bazi_data = calculate_comprehensive_bazi(user.birthDate, user.birthTime, user.latitude, user.longitude)
         
         return {
             "status": "success",
-            "service": "全日期八字分析（修正版）",
-            "calculation_method": "標準節氣法八字計算",
             "用戶資訊": {
                 "userId": user.userId,
                 "name": user.name,
                 "gender": user.gender,
                 "birthDate": f"{user.birthDate[:4]}-{user.birthDate[4:6]}-{user.birthDate[6:8]}",
                 "birthTime": user.birthTime,
-                "career": user.career if user.career else "未提供",
-                "birthPlace": user.birthPlace,
-                "經緯度": f"{user.latitude}, {user.longitude}",
-                "content": user.content,
-                "contentType": user.contentType,
-                "ready": user.ready
-            },
-            "對象資訊": {
-                "targetName": user.targetName if user.targetName else "無",
-                "targetGender": user.targetGender if user.targetGender else "無", 
-                "targetBirthDate": user.targetBirthDate if user.targetBirthDate else "無",
-                "targetBirthTime": user.targetBirthTime if user.targetBirthTime else "無",
-                "targetCareer": user.targetCareer if user.targetCareer else "無",
-                "targetBirthPlace": user.targetBirthPlace if user.targetBirthPlace else "無"
+                "birthPlace": user.birthPlace
             },
             "八字分析": bazi_data
         }
         
     except Exception as e:
-        return {
-            "status": "error", 
-            "message": str(e),
-            "trace": traceback.format_exc()
-        }
+        return {"status": "error", "message": str(e)}
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy",
-        "service": "all-dates-bazi-api-fixed",
-        "lunardate_available": LUNARDATE_AVAILABLE,
-        "version": "12.0.0"
-    }
+    return {"status": "healthy", "version": "13.0.0"}
 
-# 測試函數 - 驗證1995年4月4日11時的計算結果
-def test_specific_case():
-    """測試特定案例：1995年4月4日11時"""
+if __name__ == "__main__":
+    # 完整时辰测试
+    print("=== 完整时辰测试 ===")
+    test_hours = [0, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
+    expected_zhi = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥", "子"]
+    
+    for i, hour in enumerate(test_hours):
+        try:
+            result = calculate_comprehensive_bazi("20000101", f"{hour:02d}:00")
+            time_zhi = result["八字命盤"]["時柱"]["地支"]
+            status = "✓" if time_zhi == expected_zhi[i] else "✗"
+            print(f"{hour:2d}:00 -> {time_zhi} (期望:{expected_zhi[i]}) {status}")
+        except Exception as e:
+            print(f"{hour:2d}:00 -> 错误: {e}")
+    
+    print("\n=== 特定案例测试 ===")
+    print("测试：1995年4月4日11:35")
     try:
-        result = calculate_comprehensive_bazi("19950404", "11:00")
+        result = calculate_comprehensive_bazi("19950404", "11:35")
         pillars = result["八字命盤"]
-        print("測試結果：1995年4月4日11時")
-        print(f"年柱：{pillars['年柱']['天干']}{pillars['年柱']['地支']}")
-        print(f"月柱：{pillars['月柱']['天干']}{pillars['月柱']['地支']}")
-        print(f"日柱：{pillars['日柱']['天干']}{pillars['日柱']['地支']}")
-        print(f"時柱：{pillars['時柱']['天干
+        print(f"完整八字：{pillars['年柱']['天干']}{pillars['年柱']['地支']} {pillars['月柱']['天干']}{pillars['月柱']['地支']} {pillars['日柱']['天干']}{pillars['日柱']['地支']} {pillars['時柱']['天干']}{pillars['時柱']['地支']}")
+    except Exception as e:
+        print(f"测试错误：{e}")
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
