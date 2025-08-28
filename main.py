@@ -150,15 +150,33 @@ def get_day_ganzhi_from_lunar(lunar_year, lunar_month, lunar_day):
     return TIAN_GAN[total % 10], DI_ZHI[total % 12]
 
 def get_hour_ganzhi_corrected(day_gan, hour, minute):
-    # 標準時辰：子=23:00–00:59；其餘每 2 小時一支
-    if hour==23 or hour==0:
-        zhi_index = 0
+    """
+    正確的時辰對應：
+    子時: 23:00-00:59
+    丑時: 01:00-02:59
+    寅時: 03:00-04:59
+    卯時: 05:00-06:59
+    辰時: 07:00-08:59
+    巳時: 09:00-10:59
+    午時: 11:00-12:59  ← 11點應該是午時
+    未時: 13:00-14:59
+    申時: 15:00-16:59
+    酉時: 17:00-18:59
+    戌時: 19:00-20:59
+    亥時: 21:00-22:59
+    """
+    if hour == 23 or hour == 0:
+        zhi_index = 0  # 子時
     else:
-        zhi_index = (hour + 1)//2
+        zhi_index = (hour + 1) // 2
+    
     hour_zhi = DI_ZHI[zhi_index]
+    
+    # 根據日干推算時干
     day_idx = TIAN_GAN.index(day_gan)
-    base = [0,2,4,6,8,0,2,4,6,8]
+    base = [0,2,4,6,8,0,2,4,6,8]  # 甲日子時起甲子，乙日子時起丙子...
     hour_gan = TIAN_GAN[(base[day_idx] + zhi_index) % 10]
+    
     return hour_gan, hour_zhi
 
 def get_nayin(gan,zhi): return NAYIN.get(gan+zhi,"未知")
@@ -168,11 +186,7 @@ def calculate_comprehensive_bazi(birth_date, birth_time, latitude=None, longitud
     year, month, day = parse_date_string(birth_date)
     hour, minute = parse_time_string(birth_time)
 
-    # ========= 你指定：11 點一律算「亥時」(21:00–22:59) =========
-    if hour == 11:
-        hour = 22  # 直接落在亥時區間；分不改，其餘邏輯不動
-    # ============================================================
-
+    # 移除錯誤的11點特殊處理，使用標準時辰計算
     lunar = solar_to_lunar_converter(year, month, day)
     lunar_year, lunar_month, lunar_day = lunar["lunar_year"], lunar["lunar_month"], lunar["lunar_day"]
 
