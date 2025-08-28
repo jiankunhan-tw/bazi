@@ -1,5 +1,4 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.4.2
+fastapi==0.100.0
+uvicorn==0.23.0  
+pydantic==1.10.12
 lunardate==0.2.2
-python-multipart==0.0.6
